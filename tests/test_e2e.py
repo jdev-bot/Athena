@@ -260,6 +260,53 @@ def test_jesse_wrapper_compile():
     assert "should_long" in code
 
 
+def test_live_start_stop(client):
+    # Create strategy
+    r = client.post("/strategies/generate", json={"template": "trend_following", "count": 1})
+    strat = r.json()["strategies"][0]
+    sid = strat["id"]
+
+    # Start live session
+    r2 = client.post("/live/start", json={
+        "strategy_id": sid,
+        "mode": "paper",
+        "max_drawdown": 0.15,
+        "daily_loss_limit": 0.10,
+    })
+    assert r2.status_code == 200
+    body = r2.json()
+    session_id = body["session_id"]
+    assert body["status"] == "running"
+    assert body["strategy_id"] == sid
+
+    # Status
+    r3 = client.get(f"/live/status?session_id={session_id}")
+    assert r3.status_code == 200
+    status = r3.json()
+    assert status["session_id"] == session_id
+    assert status["mode"] == "paper"
+    assert status["equity"] is not None
+
+    # Stop
+    r4 = client.post("/live/stop", params={"session_id": session_id})
+    assert r4.status_code == 200
+    assert r4.json()["status"] == "stopped"
+
+    # Status after stop should 404 (runner removed from in-memory registry)
+    r5 = client.get(f"/live/status?session_id={session_id}")
+    assert r5.status_code == 404
+
+
+def test_live_start_invalid_mode(client):
+    r = client.post("/strategies/generate", json={"template": "trend_following", "count": 1})
+    sid = r.json()["strategies"][0]["id"]
+    r2 = client.post("/live/start", json={
+        "strategy_id": sid,
+        "mode": "invalid",
+    })
+    assert r2.status_code == 400
+
+
 def test_jesse_wrapper_backtest():
     from athena.core.jesse_wrapper import JesseWrapper
     wrapper = JesseWrapper()

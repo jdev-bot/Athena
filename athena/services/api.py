@@ -17,6 +17,7 @@ from athena.generator.dna import DNAEncoder
 from athena.generator.templates import TEMPLATE_MAP, TEMPLATE_SPECS
 from athena.common.config import config
 from athena.core.jesse_wrapper import JesseWrapper
+from athena.live.runner import LiveRunner
 
 
 # ── startup / shutdown ────────────────────────────────────────────
@@ -73,6 +74,36 @@ class BacktestListItem(BaseModel):
     total_trades: int
     win_rate: float
     created_at: str
+
+
+class LiveStartRequest(BaseModel):
+    strategy_id: str
+    mode: str = "paper"  # paper | live
+    max_drawdown: float = 0.15
+    daily_loss_limit: float = 0.10
+
+
+class LiveStartResponse(BaseModel):
+    session_id: str
+    strategy_id: str
+    status: str
+
+
+class LiveStatusResponse(BaseModel):
+    session_id: str
+    status: str
+    mode: Optional[str] = None
+    equity: float
+    open_positions: int
+    total_trades: int
+    max_drawdown: float
+    started_at: Optional[str] = None
+    stopped_at: Optional[str] = None
+    last_signals: list = []
+
+
+# ── live runner registry (in-memory, holds async tasks) ──────────
+_runners: dict[str, LiveRunner] = {}
 
 
 # ── helpers ────────────────────────────────────────────────────────
@@ -267,3 +298,51 @@ async def get_stats():
             "score": best.raw_score if best else 0.0,
         },
     }
+
+
+@app.post("/live/start", response_model=LiveStartResponse)
+async def live_start(req: LiveStartRequest):
+    """Start a forward-test paper/live session for a strategy."""
+    session = get_session()
+    strategy = session.query(StrategyModel).filter_by(id=req.strategy_id).first()
+    if not strategy:
+        raise HTTPException(status_code=404, detail="Strategy not found")
+    session.close()
+
+    if req.mode not in ("paper", "live"):
+        raise HTTPException(status_code=400, detail="mode must be 'paper' or 'live'")
+
+    runner = LiveRunner(
+        strategy_id=req.strategy_id,
+        mode=req.mode,
+        risk={"max_drawdown": req.max_drawdown, "daily_loss_limit": req.daily_loss_limit},
+    )
+    await runner.start()
+    _runners[runner.session_id] = runner
+    return LiveStartResponse(
+        session_id=runner.session_id,
+        strategy_id=req.strategy_id,
+        status="running",
+    )
+
+
+@app.post("/live/stop")
+async def live_stop(session_id: str):
+    """Stop a running forward-test session."""
+    runner = _runners.pop(session_id, None)
+    if not runner:
+        raise HTTPException(status_code=404, detail="Session not found")
+    await runner.stop("stopped_by_user")
+    return {"session_id": session_id, "status": "stopped"}
+
+
+@app.get("/live/status", response_model=LiveStatusResponse)
+async def live_status(session_id: str):
+    """Get current stats of a live session."""
+    runner = _runners.get(session_id)
+    if not runner:
+        raise HTTPException(status_code=404, detail="Session not found")
+    stats = runner.stats
+    if not stats:
+        raise HTTPException(status_code=404, detail="Session record missing")
+    return LiveStatusResponse(**stats)

@@ -42,6 +42,31 @@ class StrategyModel(Base):
     metadata_json = Column(JSON, default=dict)
 
 
+class LiveSessionModel(Base):
+    __tablename__ = "live_sessions"
+
+    id = Column(String, primary_key=True)
+    strategy_id = Column(String, nullable=False)
+    started_at = Column(DateTime, default=datetime.utcnow)
+    stopped_at = Column(DateTime, nullable=True)
+    status = Column(String, default="running")  # running, stopped_by_user, stopped_drawdown, stopped_error
+    mode = Column(String, default="paper")  # paper, live
+
+    # Runtime stats
+    equity = Column(Float, default=10_000.0)
+    open_positions = Column(Integer, default=0)
+    unrealized_pnl = Column(Float, default=0.0)
+    total_trades_taken = Column(Integer, default=0)
+    max_drawdown_seen = Column(Float, default=0.0)
+
+    # Signals log (last N signals as JSON list)
+    last_signals = Column(JSON, default=list)
+
+    # Metadata
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow)
+
+
 # Setup
 def get_engine():
     return create_engine(config.DATABASE_URL)

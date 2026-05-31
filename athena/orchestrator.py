@@ -44,25 +44,21 @@ class AthenaOrchestrator:
     
     def evaluate_strategy(self, record: StrategyRecord) -> PerformanceMetrics:
         """Run backtest and return metrics."""
-        # Write strategy code to file
+        from athena.core.jesse_wrapper import JesseWrapper
+        wrapper = JesseWrapper()
         code = self.generate_strategy_code(record)
-        strategy_file = config.GENERATED_DIR / f"{record.id}.py"
-        strategy_file.parent.mkdir(parents=True, exist_ok=True)
-        strategy_file.write_text(code)
+        result = wrapper.run_backtest(code)
         
-        # TODO: Actually run Jesse backtest here
-        # For now, simulate with random metrics for testing
-        import random
         return PerformanceMetrics(
-            total_return=random.uniform(-0.2, 0.5),
-            sharpe=random.uniform(-0.5, 2.0),
-            sortino=random.uniform(-0.5, 2.0),
-            calmar=random.uniform(-0.5, 3.0),
-            win_rate=random.uniform(0.3, 0.7),
-            max_drawdown=random.uniform(0.05, 0.4),
-            total_trades=random.randint(10, 200),
-            avg_trade=random.uniform(-0.01, 0.05),
-            profit_factor=random.uniform(0.5, 3.0),
+            total_return=result.get("total_return", 0.0),
+            sharpe=result.get("sharpe", 0.0),
+            sortino=result.get("sortino", 0.0),
+            calmar=result.get("calmar", 0.0),
+            win_rate=result.get("win_rate", 0.0),
+            max_drawdown=result.get("max_drawdown", 0.0),
+            total_trades=result.get("total_trades", 0),
+            avg_trade=result.get("avg_trade", 0.0),
+            profit_factor=result.get("profit_factor", 0.0),
         )
     
     def run_generation(self, template: StrategyTemplate) -> List[StrategyRecord]:

@@ -75,17 +75,15 @@ class {class_name}(Strategy):
         self.position_size = {position_size}
         
     def should_long(self):
-        bb = ta.bollinger_bands(self.candles, self.bb_period, self.bb_std)
-        rsi = ta.rsi(self.candles, self.rsi_period)
         sma = ta.sma(self.candles, self.mean_period)
+        rsi = ta.rsi(self.candles, self.rsi_period)
         
-        if bb is None or rsi is None or sma is None:
+        if sma is None or rsi is None:
             return False
             
-        lower_band = bb['lower']
         deviation = (sma - self.price) / sma
         
-        return (self.price <= lower_band and 
+        return (self.price < sma and 
                 rsi < self.rsi_oversold and
                 deviation > self.deviation_threshold)
     
@@ -96,17 +94,15 @@ class {class_name}(Strategy):
         self.stop_loss = qty, self.price * 0.98
     
     def should_short(self):
-        bb = ta.bollinger_bands(self.candles, self.bb_period, self.bb_std)
-        rsi = ta.rsi(self.candles, self.rsi_period)
         sma = ta.sma(self.candles, self.mean_period)
+        rsi = ta.rsi(self.candles, self.rsi_period)
         
-        if bb is None or rsi is None or sma is None:
+        if sma is None or rsi is None:
             return False
             
-        upper_band = bb['upper']
         deviation = (self.price - sma) / sma
         
-        return (self.price >= upper_band and 
+        return (self.price > sma and 
                 rsi > self.rsi_overbought and
                 deviation > self.deviation_threshold)
     
@@ -135,8 +131,8 @@ class {class_name}(Strategy):
         self.position_size = {position_size}
         
     def should_long(self):
-        high = ta.max(self.candles[:, 3], self.lookback)
-        low = ta.min(self.candles[:, 4], self.lookback)
+        high = ta.ema(self.candles[:, 3], self.lookback)
+        low = ta.ema(self.candles[:, 4], self.lookback)
         atr = ta.atr(self.candles, self.atr_period)
         
         if high is None or low is None or atr is None:
@@ -152,8 +148,8 @@ class {class_name}(Strategy):
         self.stop_loss = qty, self.price - atr * self.atr_multiplier * 2
     
     def should_short(self):
-        high = ta.max(self.candles[:, 3], self.lookback)
-        low = ta.min(self.candles[:, 4], self.lookback)
+        high = ta.ema(self.candles[:, 3], self.lookback)
+        low = ta.ema(self.candles[:, 4], self.lookback)
         atr = ta.atr(self.candles, self.atr_period)
         
         if high is None or low is None or atr is None:
@@ -187,28 +183,28 @@ class {class_name}(Strategy):
         self.position_size = {position_size}
         
     def should_long(self):
-        momentum = ta.momentum(self.candles, self.momentum_period)
-        signal = ta.sma(momentum, self.signal_period) if momentum is not None else None
+        macd_line, signal_line, _ = ta.macd(self.candles, fastperiod=12, slowperiod=26, signalperiod=9)
         rsi = ta.rsi(self.candles, self.rsi_period)
         
-        if momentum is None or signal is None or rsi is None:
+        if macd_line is None or signal_line is None or rsi is None:
             return False
             
-        return momentum > signal and momentum > self.momentum_threshold and rsi < 70
+        momentum = macd_line - signal_line
+        return momentum > self.momentum_threshold and rsi < 70
     
     def go_long(self):
         qty = jh.size_to_qty(self.position_size * self.balance, self.price)
         self.buy = qty, self.price
     
     def should_short(self):
-        momentum = ta.momentum(self.candles, self.momentum_period)
-        signal = ta.sma(momentum, self.signal_period) if momentum is not None else None
+        macd_line, signal_line, _ = ta.macd(self.candles, fastperiod=12, slowperiod=26, signalperiod=9)
         rsi = ta.rsi(self.candles, self.rsi_period)
         
-        if momentum is None or signal is None or rsi is None:
+        if macd_line is None or signal_line is None or rsi is None:
             return False
             
-        return momentum < signal and momentum < -self.momentum_threshold and rsi > 30
+        momentum = macd_line - signal_line
+        return momentum < -self.momentum_threshold and rsi > 30
     
     def go_short(self):
         qty = jh.size_to_qty(self.position_size * self.balance, self.price)

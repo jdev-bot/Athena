@@ -1,83 +1,273 @@
-"""FastAPI service for Athena."""
+"""FastAPI service for Athena — Strategy generation + backtest runner."""
+import os
+import uuid
+import tempfile
 from contextlib import asynccontextmanager
+from datetime import datetime
 from typing import List, Optional
+from pathlib import Path
+
 from fastapi import FastAPI, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
+from sqlalchemy.orm import Session
+
+from athena.common.models import StrategyTemplate, StrategyStatus
 from athena.services.models import init_db, get_session, StrategyModel
-from athena.common.models import StrategyRecord, StrategyStatus
+from athena.generator.dna import DNAEncoder
+from athena.generator.templates import TEMPLATE_MAP, TEMPLATE_SPECS
+from athena.common.config import config
 
 
-# Startup/shutdown
+# ── startup / shutdown ────────────────────────────────────────────
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     init_db()
     yield
 
-app = FastAPI(title="Athena", version="0.1.0", lifespan=lifespan)
+
+app = FastAPI(title="Athena", version="0.2.0", lifespan=lifespan)
 
 
-# Request/Response models
-class StrategyCreate(BaseModel):
-    name: str
-    template: str
-    dna: dict
+# ── request / response schemas ────────────────────────────────────
+class GenerateRequest(BaseModel):
+    template: str = "trend_following"
+    count: int = Field(default=1, ge=1, le=20)
 
-class StrategyResponse(BaseModel):
+
+class GenerateResponse(BaseModel):
+    strategies: list
+
+
+class BacktestRequest(BaseModel):
+    strategy_id: str
+    start_date: str = "2024-01-01"
+    end_date: str = "2025-01-01"
+
+
+class BacktestResponse(BaseModel):
+    strategy_id: str
+    status: str
+    metrics: Optional[dict] = None
+
+
+class StrategyListItem(BaseModel):
     id: str
     name: str
     template: str
     status: str
     generation: int
     raw_score: float
+    total_return: float
+    sharpe: float
+    total_trades: int
     created_at: str
 
-# Endpoints
+
+class BacktestListItem(BaseModel):
+    strategy_id: str
+    name: str
+    total_return: float
+    sharpe: float
+    max_drawdown: float
+    total_trades: int
+    win_rate: float
+    created_at: str
+
+
+# ── helpers ────────────────────────────────────────────────────────
+def _jesse_config(exchange: str = "Sandbox", symbol: str = "BTC-USD",
+                  timeframe: str = "1h", start_date: str = "2024-01-01",
+                  end_date: str = "2025-01-01") -> tuple:
+    """Return Jesse research.backtest kwargs + temp dir."""
+    tmp = tempfile.mkdtemp(prefix="athena_jesse_")
+    tmp_path = Path(tmp)
+    (tmp_path / "strategies").mkdir(parents=True, exist_ok=True)
+    (tmp_path / "storage").mkdir(parents=True, exist_ok=True)
+    (tmp_path / "logs").mkdir(parents=True, exist_ok=True)
+
+    jesse_cfg = {
+        "starting_balance": 10_000,
+        "fee": 0.001,
+        "type": "futures",
+        "exchange": exchange,
+        "warm_up_candles": 240,
+        "futures_leverage": 1,
+        "futures_leverage_mode": "cross",
+    }
+    return jesse_cfg, tmp, tmp_path
+
+
+def _write_strategy_file(strategy_code: str, tmp_path: Path) -> None:
+    """Write compiled strategy into temp Jesse project."""
+    (tmp_path / "strategies" / "__init__.py").write_text("")
+    strat_dir = tmp_path / "strategies" / "AthenaStrategy"
+    strat_dir.mkdir(parents=True, exist_ok=True)
+    (strat_dir / "__init__.py").write_text(strategy_code)
+
+
+def _generate_synthetic_candles(start_date: str, end_date: str,
+                                symbol: str = "BTC-USD",
+                                timeframe: str = "1h",
+                                exchange: str = "Sandbox") -> tuple:
+    """Build synthetic 1-minute candles for research.backtest."""
+    import random
+    import numpy as np
+    from jesse.research import fake_candle
+
+    # Approximate minutes
+    days = (datetime.strptime(end_date, "%Y-%m-%d") -
+            datetime.strptime(start_date, "%Y-%m-%d")).days
+    n = max(days * 24 * 60, 240)
+
+    fake_candle({}, reset=True)  # reset global state
+
+    candles = []
+    for _ in range(n):
+        candle = fake_candle({})
+        candles.append(candle)
+
+    candles = np.array(candles, dtype=np.float64)
+    warmup = candles[:240] if len(candles) > 240 else candles
+
+    key = f"{exchange}-{symbol}"
+    candle_struct = {
+        "exchange": exchange,
+        "symbol": symbol,
+        "candles": candles,
+    }
+    warmup_struct = {
+        "exchange": exchange,
+        "symbol": symbol,
+        "candles": warmup,
+    }
+    return {key: candle_struct}, {key: warmup_struct}
+
+
+def _compile_strategy(record) -> str:
+    """Render Jesse strategy source from DB record."""
+    encoder = DNAEncoder()
+    params = encoder.to_strategy_params(record.dna, StrategyTemplate(record.template))
+    params["class_name"] = "AthenaStrategy"
+    template = TEMPLATE_MAP.get(StrategyTemplate(record.template))
+    return template.format(**params)
+
+
+def _run_jesse_backtest(record, start_date: str, end_date: str) -> dict:
+    """Run Jesse research.backtest and return metrics dict."""
+    import jesse
+    from jesse.research import backtest
+
+    code = _compile_strategy(record)
+    jesse_cfg, tmp, tmp_path = _jesse_config(
+        start_date=start_date, end_date=end_date
+    )
+    _write_strategy_file(code, tmp_path)
+
+    candles, warmup = _generate_synthetic_candles(start_date, end_date)
+
+    try:
+        os.chdir(tmp)
+        import sys, importlib
+        sys.path.insert(0, tmp)
+        for m in list(sys.modules.keys()):
+            if m.startswith("strategies"):
+                del sys.modules[m]
+        importlib.invalidate_caches()
+        result = backtest(
+            config=jesse_cfg,
+            routes=[
+                {"exchange": "Sandbox", "symbol": "BTC-USD",
+                 "timeframe": "1h", "strategy": "AthenaStrategy"}
+            ],
+            data_routes=[],
+            candles=candles,
+            warmup_candles=warmup,
+        )
+
+        # Jesse returns a dict when successful
+        metrics = {
+            "total_return": result.get("total", 0.0),
+            "sharpe": result.get("sharpe_ratio", 0.0),
+            "sortino": result.get("sortino_ratio", 0.0),
+            "calmar": result.get("calmar_ratio", 0.0),
+            "win_rate": result.get("winning_ratio", 0.0),
+            "max_drawdown": result.get("max_drawdown", 0.0),
+            "total_trades": result.get("total_trades", 0),
+            "avg_trade": result.get("average_trade", 0.0),
+            "profit_factor": result.get("profit_factor", 0.0),
+        }
+    except Exception as exc:
+        metrics = {
+            "error": str(exc),
+            "total_return": 0.0, "sharpe": 0.0, "sortino": 0.0,
+            "calmar": 0.0, "win_rate": 0.0, "max_drawdown": 0.0,
+            "total_trades": 0, "avg_trade": 0.0, "profit_factor": 0.0,
+        }
+    finally:
+        import shutil
+        shutil.rmtree(tmp, ignore_errors=True)
+
+    return metrics
+
+
+# ── endpoints ──────────────────────────────────────────────────────
 @app.get("/health")
 async def health():
-    return {"status": "ok", "service": "athena"}
+    return {"status": "ok", "service": "athena", "version": "0.2.0"}
 
-@app.get("/strategies", response_model=List[StrategyResponse])
+
+@app.post("/strategies/generate", response_model=GenerateResponse)
+async def generate_strategies(req: GenerateRequest):
+    """Generate new random strategies and store them."""
+    encoder = DNAEncoder()
+    try:
+        tpl = StrategyTemplate(req.template)
+    except ValueError:
+        raise HTTPException(status_code=400, detail=f"Unknown template: {req.template}")
+
+    session = get_session()
+    created = []
+    for _ in range(req.count):
+        dna = encoder.random_dna(tpl)
+        sid = f"strat_{uuid.uuid4().hex[:12]}"
+        record = StrategyModel(
+            id=sid,
+            name=f"{tpl.value}_{sid[-6:]}",
+            template=tpl.value,
+            dna=dna,
+            status=StrategyStatus.GENERATED.value,
+            generation=0,
+        )
+        session.add(record)
+        created.append({
+            "id": sid,
+            "name": record.name,
+            "template": tpl.value,
+            "dna": dna,
+        })
+
+    session.commit()
+    return {"strategies": created}
+
+
+@app.get("/strategies", response_model=List[StrategyListItem])
 async def list_strategies(status: Optional[str] = None, limit: int = 50):
     session = get_session()
-    query = session.query(StrategyModel)
+    q = session.query(StrategyModel)
     if status:
-        query = query.filter(StrategyModel.status == status)
-    rows = query.order_by(StrategyModel.created_at.desc()).limit(limit).all()
+        q = q.filter(StrategyModel.status == status)
+    rows = q.order_by(StrategyModel.created_at.desc()).limit(limit).all()
     return [
-        StrategyResponse(
-            id=r.id,
-            name=r.name,
-            template=r.template,
-            status=r.status,
-            generation=r.generation,
-            raw_score=r.raw_score,
+        StrategyListItem(
+            id=r.id, name=r.name, template=r.template, status=r.status,
+            generation=r.generation, raw_score=r.raw_score,
+            total_return=r.total_return, sharpe=r.sharpe,
+            total_trades=r.total_trades,
             created_at=r.created_at.isoformat(),
         )
         for r in rows
     ]
 
-@app.post("/strategies", response_model=StrategyResponse)
-async def create_strategy(req: StrategyCreate):
-    import uuid
-    session = get_session()
-    strat = StrategyModel(
-        id=f"strat_{uuid.uuid4().hex[:12]}",
-        name=req.name,
-        template=req.template,
-        dna=req.dna,
-        status="draft",
-    )
-    session.add(strat)
-    session.commit()
-    return StrategyResponse(
-        id=strat.id,
-        name=strat.name,
-        template=strat.template,
-        status=strat.status,
-        generation=strat.generation,
-        raw_score=strat.raw_score,
-        created_at=strat.created_at.isoformat(),
-    )
 
 @app.get("/strategies/{strategy_id}")
 async def get_strategy(strategy_id: str):
@@ -99,38 +289,89 @@ async def get_strategy(strategy_id: str):
             "max_drawdown": row.max_drawdown,
             "total_trades": row.total_trades,
         },
-        "score": {
-            "raw_score": row.raw_score,
-            "verdict": row.verdict,
-        },
+        "score": {"raw_score": row.raw_score, "verdict": row.verdict},
         "created_at": row.created_at.isoformat(),
     }
 
-@app.post("/strategies/{strategy_id}/run")
-async def run_strategy(strategy_id: str):
-    """Trigger backtest/evaluation for a strategy."""
+
+@app.post("/backtests/run", response_model=BacktestResponse)
+async def run_backtest(req: BacktestRequest):
+    """Run a Jesse backtest for a stored strategy."""
     session = get_session()
-    row = session.query(StrategyModel).filter(StrategyModel.id == strategy_id).first()
+    row = session.query(StrategyModel).filter(StrategyModel.id == req.strategy_id).first()
     if not row:
         raise HTTPException(status_code=404, detail="Strategy not found")
-    
-    # Update status
-    row.status = "backtest"
+
+    row.status = StrategyStatus.BACKTEST_RUNNING.value
     session.commit()
-    
-    # TODO: Queue backtest job
-    return {"id": strategy_id, "status": "backtest_queued"}
+
+    metrics = _run_jesse_backtest(row, req.start_date, req.end_date)
+
+    if "error" in metrics:
+        row.status = StrategyStatus.BACKTEST_FAILED.value
+        row.metadata_json = {"error": metrics["error"]}
+    else:
+        row.status = StrategyStatus.BACKTEST_DONE.value
+        row.total_return = metrics.get("total_return", 0.0)
+        row.sharpe = metrics.get("sharpe", 0.0)
+        row.sortino = metrics.get("sortino", 0.0)
+        row.calmar = metrics.get("calmar", 0.0)
+        row.win_rate = metrics.get("win_rate", 0.0)
+        row.max_drawdown = metrics.get("max_drawdown", 0.0)
+        row.total_trades = metrics.get("total_trades", 0)
+        row.avg_trade = metrics.get("avg_trade", 0.0)
+        row.profit_factor = metrics.get("profit_factor", 0.0)
+        row.raw_score = metrics.get("sharpe", 0.0) / 2.0  # simple scoring
+
+    row.updated_at = datetime.utcnow()
+    session.commit()
+
+    return BacktestResponse(
+        strategy_id=req.strategy_id,
+        status=row.status,
+        metrics=metrics,
+    )
+
+
+@app.get("/backtests", response_model=List[BacktestListItem])
+async def list_backtests(limit: int = 50):
+    session = get_session()
+    rows = (
+        session.query(StrategyModel)
+        .filter(StrategyModel.status == StrategyStatus.BACKTEST_DONE.value)
+        .order_by(StrategyModel.created_at.desc())
+        .limit(limit)
+        .all()
+    )
+    return [
+        BacktestListItem(
+            strategy_id=r.id,
+            name=r.name,
+            total_return=r.total_return,
+            sharpe=r.sharpe,
+            max_drawdown=r.max_drawdown,
+            total_trades=r.total_trades,
+            win_rate=r.win_rate,
+            created_at=r.created_at.isoformat(),
+        )
+        for r in rows
+    ]
+
 
 @app.get("/stats")
 async def get_stats():
     session = get_session()
     total = session.query(StrategyModel).count()
     by_status = {}
-    for s in ["draft", "backtest", "optimize", "paper", "live", "retired"]:
-        by_status[s] = session.query(StrategyModel).filter(StrategyModel.status == s).count()
-    
-    best = session.query(StrategyModel).order_by(StrategyModel.raw_score.desc()).first()
-    
+    for s in StrategyStatus:
+        by_status[s.value] = session.query(StrategyModel).filter(
+            StrategyModel.status == s.value
+        ).count()
+    best = (
+        session.query(StrategyModel)
+        .order_by(StrategyModel.raw_score.desc())
+        .first()
+    )
     return {
         "total_strategies": total,
         "by_status": by_status,
@@ -138,5 +379,5 @@ async def get_stats():
             "id": best.id if best else None,
             "name": best.name if best else None,
             "score": best.raw_score if best else 0.0,
-        }
+        },
     }

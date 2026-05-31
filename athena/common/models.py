@@ -7,7 +7,11 @@ from pydantic import BaseModel, Field
 
 class StrategyStatus(str, Enum):
     DRAFT = "draft"
-    BACKTEST = "backtest"
+    GENERATED = "generated"
+    BACKTEST_QUEUED = "backtest_queued"
+    BACKTEST_RUNNING = "backtest_running"
+    BACKTEST_DONE = "backtest_done"
+    BACKTEST_FAILED = "backtest_failed"
     OPTIMIZE = "optimize"
     PAPER = "paper"
     LIVE = "live"

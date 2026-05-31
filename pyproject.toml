@@ -1,0 +1,38 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "athena"
+version = "0.1.0"
+description = "AI strategy generator on Jesse trading framework"
+authors = [{name="Athena Team"}]
+requires-python = ">=3.10"
+dependencies = [
+    "jesse",
+    "fastapi",
+    "uvicorn",
+    "sqlalchemy",
+    "scikit-learn",
+    "deap",
+    "pytest",
+    "pytest-asyncio",
+    "prometheus-client",
+]
+
+[project.optional-dependencies]
+dev = [
+    "black",
+    "ruff",
+    "mypy",
+]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["athena*"]
+
+[tool.black]
+line-length = 100
+
+[tool.ruff]
+line-length = 100

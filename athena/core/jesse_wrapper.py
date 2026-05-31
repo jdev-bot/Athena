@@ -1,22 +1,22 @@
-"""Core Jesse integration wrapper — uses jesse.research.backtest()."""
+"""Core Jesse integration — real market data backtesting via ccxt."""
 import os
 import sys
 import tempfile
 import shutil
 from pathlib import Path
 from typing import Any, Dict
-import numpy as np
 
-from jesse.research import backtest, fake_candle
+from jesse.research import backtest
 
 from athena.common.config import config
 from athena.generator.dna import DNAEncoder
 from athena.generator.templates import TEMPLATE_MAP
 from athena.common.models import StrategyTemplate
+from athena.market.provider import MarketDataProvider
 
 
 class JesseWrapper:
-    """Wraps Jesse framework for programmatic backtesting."""
+    """Wraps Jesse framework for programmatic backtesting with real market data."""
 
     def __init__(self):
         try:
@@ -24,6 +24,7 @@ class JesseWrapper:
         except FileNotFoundError:
             self._orig_dir = os.path.dirname(os.path.abspath(__file__))
 
+    # ── temp project layout (Jesse requires package-dir strategies) ──
     def _temp_project(self, strategy_code: str) -> str:
         """Create a minimal temp Jesse project with the strategy."""
         tmp = tempfile.mkdtemp(prefix="athena_jesse_")
@@ -36,26 +37,41 @@ class JesseWrapper:
         (strat_dir / "__init__.py").write_text(strategy_code)
         return tmp
 
-    def _generate_1m_candles(self, n: int, exchange: str = "Sandbox",
-                             symbol: str = "BTC-USD") -> tuple:
-        """Generate n 1-minute fake candles in Jesse's expected format."""
-        fake_candle({}, reset=True)
-        candles = []
-        for _ in range(n):
-            candles.append(fake_candle({}))
-        candles = np.array(candles, dtype=np.float64)
-        warmup = candles[:240] if len(candles) > 240 else candles
-        key = f"{exchange}-{symbol}"
-        return {
-            key: {"exchange": exchange, "symbol": symbol, "candles": candles}
-        }, {
-            key: {"exchange": exchange, "symbol": symbol, "candles": warmup}
-        }
+    # ── real-candle loading ──────────────────────────────────────────
+    def _load_real_candles(
+        self,
+        start_date: str,
+        end_date: str,
+        exchange: str,
+        symbol: str,
+        timeframe: str = "1h",
+    ) -> tuple[dict, dict]:
+        """Fetch or load real candles from ccxt and return Jesse-compatible dicts."""
+        provider = MarketDataProvider(exchange_name=exchange.lower())
+        ccxt_symbol = symbol.replace("-", "/")
+        # Jesse always expects 1m candles regardless of route timeframe
+        provider.fetch_and_cache(
+            symbol=ccxt_symbol,
+            timeframe="1m",
+            start_date=start_date,
+            end_date=end_date,
+        )
+        exchange_display = "binance"
+        return provider.candles_to_jesse_format(
+            symbol=ccxt_symbol, timeframe="1m", exchange_name=exchange_display
+        )
 
-    def run_backtest(self, strategy_code: str, start_date: str = "2024-01-01",
-                     end_date: str = "2024-02-01", exchange: str = "Sandbox",
-                     symbol: str = "BTC-USD", timeframe: str = "1h") -> Dict[str, Any]:
-        """Run an isolated Jesse backtest and return metrics."""
+    # ── backtest ─────────────────────────────────────────────────────
+    def run_backtest(
+        self,
+        strategy_code: str,
+        start_date: str = "2024-01-01",
+        end_date: str = "2024-02-01",
+        exchange: str = "binance",
+        symbol: str = "BTC-USD",
+        timeframe: str = "1h",
+    ) -> Dict[str, Any]:
+        """Run an isolated Jesse backtest with **real** market data."""
         tmp = self._temp_project(strategy_code)
         try:
             os.chdir(tmp)
@@ -69,13 +85,9 @@ class JesseWrapper:
             import importlib
             importlib.invalidate_caches()
 
-            # Compute candle count (approx minutes in range)
-            from datetime import datetime
-            days = (datetime.strptime(end_date, "%Y-%m-%d") -
-                    datetime.strptime(start_date, "%Y-%m-%d")).days
-            n = max(days * 24 * 60, 240)
-
-            candles, warmup = self._generate_1m_candles(n, exchange, symbol)
+            candles, warmup = self._load_real_candles(
+                start_date, end_date, exchange, symbol, timeframe
+            )
 
             result = backtest(
                 config={

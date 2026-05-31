@@ -16,6 +16,7 @@ from athena.services.models import init_db, get_session, StrategyModel
 from athena.generator.dna import DNAEncoder
 from athena.generator.templates import TEMPLATE_MAP, TEMPLATE_SPECS
 from athena.common.config import config
+from athena.core.jesse_wrapper import JesseWrapper
 
 
 # ── startup / shutdown ────────────────────────────────────────────
@@ -75,74 +76,6 @@ class BacktestListItem(BaseModel):
 
 
 # ── helpers ────────────────────────────────────────────────────────
-def _jesse_config(exchange: str = "Sandbox", symbol: str = "BTC-USD",
-                  timeframe: str = "1h", start_date: str = "2024-01-01",
-                  end_date: str = "2025-01-01") -> tuple:
-    """Return Jesse research.backtest kwargs + temp dir."""
-    tmp = tempfile.mkdtemp(prefix="athena_jesse_")
-    tmp_path = Path(tmp)
-    (tmp_path / "strategies").mkdir(parents=True, exist_ok=True)
-    (tmp_path / "storage").mkdir(parents=True, exist_ok=True)
-    (tmp_path / "logs").mkdir(parents=True, exist_ok=True)
-
-    jesse_cfg = {
-        "starting_balance": 10_000,
-        "fee": 0.001,
-        "type": "futures",
-        "exchange": exchange,
-        "warm_up_candles": 240,
-        "futures_leverage": 1,
-        "futures_leverage_mode": "cross",
-    }
-    return jesse_cfg, tmp, tmp_path
-
-
-def _write_strategy_file(strategy_code: str, tmp_path: Path) -> None:
-    """Write compiled strategy into temp Jesse project."""
-    (tmp_path / "strategies" / "__init__.py").write_text("")
-    strat_dir = tmp_path / "strategies" / "AthenaStrategy"
-    strat_dir.mkdir(parents=True, exist_ok=True)
-    (strat_dir / "__init__.py").write_text(strategy_code)
-
-
-def _generate_synthetic_candles(start_date: str, end_date: str,
-                                symbol: str = "BTC-USD",
-                                timeframe: str = "1h",
-                                exchange: str = "Sandbox") -> tuple:
-    """Build synthetic 1-minute candles for research.backtest."""
-    import random
-    import numpy as np
-    from jesse.research import fake_candle
-
-    # Approximate minutes
-    days = (datetime.strptime(end_date, "%Y-%m-%d") -
-            datetime.strptime(start_date, "%Y-%m-%d")).days
-    n = max(days * 24 * 60, 240)
-
-    fake_candle({}, reset=True)  # reset global state
-
-    candles = []
-    for _ in range(n):
-        candle = fake_candle({})
-        candles.append(candle)
-
-    candles = np.array(candles, dtype=np.float64)
-    warmup = candles[:240] if len(candles) > 240 else candles
-
-    key = f"{exchange}-{symbol}"
-    candle_struct = {
-        "exchange": exchange,
-        "symbol": symbol,
-        "candles": candles,
-    }
-    warmup_struct = {
-        "exchange": exchange,
-        "symbol": symbol,
-        "candles": warmup,
-    }
-    return {key: candle_struct}, {key: warmup_struct}
-
-
 def _compile_strategy(record) -> str:
     """Render Jesse strategy source from DB record."""
     encoder = DNAEncoder()
@@ -153,60 +86,13 @@ def _compile_strategy(record) -> str:
 
 
 def _run_jesse_backtest(record, start_date: str, end_date: str) -> dict:
-    """Run Jesse research.backtest and return metrics dict."""
-    import jesse
-    from jesse.research import backtest
-
+    """Run Jesse backtest with real market data via JesseWrapper."""
     code = _compile_strategy(record)
-    jesse_cfg, tmp, tmp_path = _jesse_config(
-        start_date=start_date, end_date=end_date
+    wrapper = JesseWrapper()
+    metrics = wrapper.run_backtest(
+        code, start_date=start_date, end_date=end_date,
+        exchange="binance", symbol="BTC-USD", timeframe="1h",
     )
-    _write_strategy_file(code, tmp_path)
-
-    candles, warmup = _generate_synthetic_candles(start_date, end_date)
-
-    try:
-        os.chdir(tmp)
-        import sys, importlib
-        sys.path.insert(0, tmp)
-        for m in list(sys.modules.keys()):
-            if m.startswith("strategies"):
-                del sys.modules[m]
-        importlib.invalidate_caches()
-        result = backtest(
-            config=jesse_cfg,
-            routes=[
-                {"exchange": "Sandbox", "symbol": "BTC-USD",
-                 "timeframe": "1h", "strategy": "AthenaStrategy"}
-            ],
-            data_routes=[],
-            candles=candles,
-            warmup_candles=warmup,
-        )
-
-        # Jesse returns a dict when successful
-        metrics = {
-            "total_return": result.get("total", 0.0),
-            "sharpe": result.get("sharpe_ratio", 0.0),
-            "sortino": result.get("sortino_ratio", 0.0),
-            "calmar": result.get("calmar_ratio", 0.0),
-            "win_rate": result.get("winning_ratio", 0.0),
-            "max_drawdown": result.get("max_drawdown", 0.0),
-            "total_trades": result.get("total_trades", 0),
-            "avg_trade": result.get("average_trade", 0.0),
-            "profit_factor": result.get("profit_factor", 0.0),
-        }
-    except Exception as exc:
-        metrics = {
-            "error": str(exc),
-            "total_return": 0.0, "sharpe": 0.0, "sortino": 0.0,
-            "calmar": 0.0, "win_rate": 0.0, "max_drawdown": 0.0,
-            "total_trades": 0, "avg_trade": 0.0, "profit_factor": 0.0,
-        }
-    finally:
-        import shutil
-        shutil.rmtree(tmp, ignore_errors=True)
-
     return metrics
 
 
@@ -296,7 +182,7 @@ async def get_strategy(strategy_id: str):
 
 @app.post("/backtests/run", response_model=BacktestResponse)
 async def run_backtest(req: BacktestRequest):
-    """Run a Jesse backtest for a stored strategy."""
+    """Run a Jesse backtest for a stored strategy using real market data."""
     session = get_session()
     row = session.query(StrategyModel).filter(StrategyModel.id == req.strategy_id).first()
     if not row:

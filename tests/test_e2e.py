@@ -93,8 +93,8 @@ def test_run_backtest(client):
     assert body["status"] in ("backtest_done", "backtest_failed")
     assert "metrics" in body
     m = body["metrics"]
-    assert isinstance(m.get("total_return"), float)
-    assert isinstance(m.get("sharpe"), float)
+    assert isinstance(m.get("total_return"), (int, float))
+    assert isinstance(m.get("sharpe"), (int, float))
     assert isinstance(m.get("total_trades"), int)
 
 

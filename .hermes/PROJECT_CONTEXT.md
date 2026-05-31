@@ -6,58 +6,76 @@ ML-powered strategy generator for crypto trading via the Jesse framework.
 ## Stack
 - **Backend:** Python 3.12, FastAPI, SQLAlchemy + PostgreSQL
 - **Genetic Engine:** Custom GA with DNA encoding
-- **Backtesting:** Jesse framework
-- **Tests:** pytest with 20 E2E tests (all passing)
+- **Backtesting:** Jesse framework with real market data via ccxt
+- **Live Feed:** ccxt Pro WebSocket streaming (Binance)
+- **Tests:** pytest with 22 E2E tests (all passing)
 - **Repo:** https://github.com/jdev-bot/Athena
 
 ## Git
 - **Remote:** https://github.com/jdev-bot/Athena.git
 - **Branch:** main
-- **Latest commit:** 32c8729 (20/20 E2E tests passing)
+- **Latest commit:** df3a222 (22/22 E2E tests, Phase 2 complete)
 
 ## Phase 1 Complete ✅
 - Strategy DNA generator + GA engine
 - FastAPI service with 7 endpoints
 - Jesse `research.backtest()` integration via isolated temp projects
-- 20 E2E tests covering API, DNA, GA, scorer, orchestrator, Jesse wrapper
+- Real market data via ccxt / Binance OHLCV
+- 22 E2E tests covering API, DNA, GA, scorer, orchestrator, Jesse wrapper, live runner
 
-## Known Issues / Notes
-- Jesse `is_unit_testing()` looks at `PYTEST_CURRENT_TEST` env var; we pop it before backtest to ensure strategies are found in the temp project dir rather than the pytest package dir
-- Backtest returns zero trades on synthetic `fake_candle` data — expected for random-noise candles
-- `datetime.utcnow()` deprecation warnings throughout (SQLAlchemy + our code)
-- No remote push configured in early commits — fixed, `origin/main` now tracking
+## Phase 2 Complete ✅
+- **LiveFeed** — async ccxt Pro WebSocket streaming real 1m BTC/USDT candles
+- **LiveRunner** — forward-test evaluator (signal-only, no trade execution)
+- **FastAPI live endpoints** — `POST /live/start`, `POST /live/stop`, `GET /live/status`
+- **Kill-switch** — max drawdown (15%) + daily loss limit (10%) circuit breakers
+- **`live_sessions`** DB table with runtime stats (equity, positions, trades, signals)
 
-## Next Phase
-Phase 2: Forward testing / paper trading — wire live exchange WebSocket data into a live runner loop, add `live_runner` process supervisor, and build a `/live` API endpoint for starting/stopping paper trades.
+## Available Endpoints (10 total)
+| Method | Path | Description |
+|---|---|---|
+| GET | `/health` | Service status |
+| POST | `/strategies/generate` | Generate strategies by DNA |
+| GET | `/strategies` | List/filter strategies |
+| GET | `/strategies/{id}` | Strategy detail |
+| POST | `/backtests/run` | Run Jesse backtest on real data |
+| GET | `/backtests` | Completed backtest list |
+| GET | `/stats` | Aggregate counts |
+| POST | `/live/start` | Start forward-test session |
+| POST | `/live/stop` | Stop session |
+| GET | `/live/status` | Session stats + signals |
 
 ## Architecture
 ```
-┌──────────────┐     ┌──────────────┐     ┌──────────────┐
-│   FastAPI    │────▶│  Generation  │────▶│   Backtest   │
-│   /api       │     │  /engine     │     │   /runner    │
-└──────────────┘     └──────────────┘     └──────────────┘
-       │                    │                    │
-       ▼                    ▼                    ▼
-┌──────────────┐     ┌──────────────┐     ┌──────────────┐
-│   Postgres   │     │   DNA / GA   │     │   Jesse FW   │
-│   athena_db  │     │   Templates  │     │   research   │
-└──────────────┘     └──────────────┘     └──────────────┘
+┌────────────────────────────────────────────────────────────────────┐
+│                         FastAPI / Uvicorn                          │
+│    /strategies    /backtests    /stats    /live/start|stop|status  │
+└──────────────┬─────────────────────┬──────────────┬────────────────┘
+               │                     │              │
+        ┌──────▼──────┐      ┌─────▼──────┐  ┌──▼──────────┐
+        │  Generator  │      │  Backtest  │  │  LiveRunner │
+        │  DNA / GA   │      │  Jesse FW  │  │  Signal-only│
+        └─────────────┘      └─────┬──────┘  └──────┬──────┘
+                                   │                  │
+                          ┌────────▼─────────┐  ┌────▼──────┐
+                          │ MarketDataProvider│  │  LiveFeed │
+                          │  ccxt / Binance   │  │  WS 1m    │
+                          └───────────────────┘  └───────────┘
 ```
-
-## Sensitive Config
-Postgres passwords and any API/secret credentials must be redacted in command output.
 
 ## Key Files
 | File | Purpose |
 |---|---|
-| `athena/services/api.py` | FastAPI app (7 endpoints) |
-| `athena/core/jesse_wrapper.py` | `JesseWrapper` — isolated backtest runner |
+| `athena/services/api.py` | FastAPI app (10 endpoints) |
+| `athena/core/jesse_wrapper.py` | `JesseWrapper` — real-data backtest runner |
+| `athena/market/provider.py` | `MarketDataProvider` — ccxt OHLCV fetcher |
+| `athena/live/feed.py` | `LiveFeed` — ccxt Pro WebSocket streamer |
+| `athena/live/runner.py` | `ForwardRunner` + `LiveRunner` — forward-test |
 | `athena/orchestrator.py` | `AthenaOrchestrator` — GA generation loop |
-| `tests/test_e2e.py` | 20 end-to-end tests |
-| `pyproject.toml` | Dependencies + pytest config |
-| `README.md` | Project documentation |
+| `tests/test_e2e.py` | 22 end-to-end tests |
+| `pyproject.toml` | Dependencies (includes ccxt) + pytest config |
 
 ## Environment
 - Python venv at `.venv/`
 - Jesse installed in venv with editable or standard install
+- ccxt 4.x installed in venv
 - PostgreSQL running on `localhost:5435` with `athena_db`

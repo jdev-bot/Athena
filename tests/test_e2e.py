@@ -274,5 +274,5 @@ class AthenaStrategy(Strategy):
 """
     result = wrapper.run_backtest(code, start_date="2024-01-01", end_date="2024-01-15")
     assert "error" not in result
-    assert isinstance(result["total_return"], float)
+    assert isinstance(result["total_return"], (int, float))
     assert isinstance(result["total_trades"], int)

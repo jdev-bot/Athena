@@ -60,7 +60,9 @@ class JesseWrapper:
         try:
             os.chdir(tmp)
             sys.path.insert(0, tmp)
-            # Clear cached strategy modules so Jesse picks up fresh code
+            # Prevent Jesse from treating us as a unit test and looking
+            # for strategies under the pytest package directory.
+            old_pytest = os.environ.pop("PYTEST_CURRENT_TEST", None)
             for m in list(sys.modules.keys()):
                 if m.startswith("strategies"):
                     del sys.modules[m]
@@ -93,6 +95,9 @@ class JesseWrapper:
                 candles=candles,
                 warmup_candles=warmup,
             )
+
+            if old_pytest is not None:
+                os.environ["PYTEST_CURRENT_TEST"] = old_pytest
 
             metrics = result.get("metrics", {})
             return {

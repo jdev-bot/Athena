@@ -59,6 +59,10 @@ class Deployer:
         # Write config
         pair = self._symbol_to_pair(record.dna.get("symbol", "BTC-USD"))
         timeframe = record.dna.get("timeframe", "1h")
+        # Read sizing / risk params from DNA vector
+        dna_vector = record.dna.get("vector", {}) if isinstance(record.dna, dict) else {}
+        max_open_trades = int(dna_vector.get("max_open_trades", 1))
+
         cfg = build_config(
             strategy_name="AthenaStrategy",
             strategy_path=str(strat_dir),
@@ -66,7 +70,7 @@ class Deployer:
             timeframe=timeframe,
             mode=mode,
             wallet_balance=50.0,
-            max_open_trades=1,
+            max_open_trades=max_open_trades,
             dna=record.dna,
             risk=risk,
             db_url=db_url,

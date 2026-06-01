@@ -74,7 +74,7 @@ class FreqtradeWrapper:
             "tradable_balance_ratio": 0.99,
             "fiat_display_currency": "USD",
             "dry_run": True,
-            "dry_run_wallet": 10_000,
+            "dry_run_wallet": 50.0,
             "max_open_trades": 1,
             "cancel_open_orders_on_exit": True,
             "amend_last_stake_amount": False,

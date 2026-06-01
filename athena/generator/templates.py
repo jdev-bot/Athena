@@ -40,14 +40,27 @@ class {class_name}(IStrategy):
     position_size_pct = {position_size_pct}
     min_stake_usd = {min_stake_usd}
     max_stake_usd = {max_stake_usd}
+    max_open_trades = {max_open_trades}
+    risk_capital_pct = {risk_capital_pct}
+    reserve_capital_pct = {reserve_capital_pct}
 
     def custom_stake_amount(
         self, pair, current_time, current_rate, proposed_stake, min_stake, max_stake, **kwargs
     ):
         balance = self.wallets.get_total(self.stake_currency)
+        reserve = balance * self.reserve_capital_pct
+        risk_budget = balance * self.risk_capital_pct
+        # Sum stakes already locked in open trades
+        deployed = sum(
+            trade.stake_amount for trade in self.wallets.get_all_stake_amounts().values()
+            if trade
+        )
+        available_for_new = risk_budget - deployed
+        if available_for_new < self.min_stake_usd:
+            return 0.0
         stake = balance * self.position_size_pct
         stake = max(stake, self.min_stake_usd)
-        stake = min(stake, self.max_stake_usd)
+        stake = min(stake, self.max_stake_usd, available_for_new)
         return max(min(stake, max_stake), min_stake)
 
     def populate_indicators(self, dataframe: pd.DataFrame, metadata: dict) -> pd.DataFrame:
@@ -109,14 +122,26 @@ class {class_name}(IStrategy):
     position_size_pct = {position_size_pct}
     min_stake_usd = {min_stake_usd}
     max_stake_usd = {max_stake_usd}
+    max_open_trades = {max_open_trades}
+    risk_capital_pct = {risk_capital_pct}
+    reserve_capital_pct = {reserve_capital_pct}
 
     def custom_stake_amount(
         self, pair, current_time, current_rate, proposed_stake, min_stake, max_stake, **kwargs
     ):
         balance = self.wallets.get_total(self.stake_currency)
+        reserve = balance * self.reserve_capital_pct
+        risk_budget = balance * self.risk_capital_pct
+        deployed = sum(
+            trade.stake_amount for trade in self.wallets.get_all_stake_amounts().values()
+            if trade
+        )
+        available_for_new = risk_budget - deployed
+        if available_for_new < self.min_stake_usd:
+            return 0.0
         stake = balance * self.position_size_pct
         stake = max(stake, self.min_stake_usd)
-        stake = min(stake, self.max_stake_usd)
+        stake = min(stake, self.max_stake_usd, available_for_new)
         return max(min(stake, max_stake), min_stake)
 
     def populate_indicators(self, dataframe: pd.DataFrame, metadata: dict) -> pd.DataFrame:
@@ -176,14 +201,26 @@ class {class_name}(IStrategy):
     position_size_pct = {position_size_pct}
     min_stake_usd = {min_stake_usd}
     max_stake_usd = {max_stake_usd}
+    max_open_trades = {max_open_trades}
+    risk_capital_pct = {risk_capital_pct}
+    reserve_capital_pct = {reserve_capital_pct}
 
     def custom_stake_amount(
         self, pair, current_time, current_rate, proposed_stake, min_stake, max_stake, **kwargs
     ):
         balance = self.wallets.get_total(self.stake_currency)
+        reserve = balance * self.reserve_capital_pct
+        risk_budget = balance * self.risk_capital_pct
+        deployed = sum(
+            trade.stake_amount for trade in self.wallets.get_all_stake_amounts().values()
+            if trade
+        )
+        available_for_new = risk_budget - deployed
+        if available_for_new < self.min_stake_usd:
+            return 0.0
         stake = balance * self.position_size_pct
         stake = max(stake, self.min_stake_usd)
-        stake = min(stake, self.max_stake_usd)
+        stake = min(stake, self.max_stake_usd, available_for_new)
         return max(min(stake, max_stake), min_stake)
 
     def populate_indicators(self, dataframe: pd.DataFrame, metadata: dict) -> pd.DataFrame:
@@ -236,14 +273,26 @@ class {class_name}(IStrategy):
     position_size_pct = {position_size_pct}
     min_stake_usd = {min_stake_usd}
     max_stake_usd = {max_stake_usd}
+    max_open_trades = {max_open_trades}
+    risk_capital_pct = {risk_capital_pct}
+    reserve_capital_pct = {reserve_capital_pct}
 
     def custom_stake_amount(
         self, pair, current_time, current_rate, proposed_stake, min_stake, max_stake, **kwargs
     ):
         balance = self.wallets.get_total(self.stake_currency)
+        reserve = balance * self.reserve_capital_pct
+        risk_budget = balance * self.risk_capital_pct
+        deployed = sum(
+            trade.stake_amount for trade in self.wallets.get_all_stake_amounts().values()
+            if trade
+        )
+        available_for_new = risk_budget - deployed
+        if available_for_new < self.min_stake_usd:
+            return 0.0
         stake = balance * self.position_size_pct
         stake = max(stake, self.min_stake_usd)
-        stake = min(stake, self.max_stake_usd)
+        stake = min(stake, self.max_stake_usd, available_for_new)
         return max(min(stake, max_stake), min_stake)
 
     def populate_indicators(self, dataframe: pd.DataFrame, metadata: dict) -> pd.DataFrame:
@@ -303,14 +352,26 @@ class {class_name}(IStrategy):
     position_size_pct = {position_size_pct}
     min_stake_usd = {min_stake_usd}
     max_stake_usd = {max_stake_usd}
+    max_open_trades = {max_open_trades}
+    risk_capital_pct = {risk_capital_pct}
+    reserve_capital_pct = {reserve_capital_pct}
 
     def custom_stake_amount(
         self, pair, current_time, current_rate, proposed_stake, min_stake, max_stake, **kwargs
     ):
         balance = self.wallets.get_total(self.stake_currency)
+        reserve = balance * self.reserve_capital_pct
+        risk_budget = balance * self.risk_capital_pct
+        deployed = sum(
+            trade.stake_amount for trade in self.wallets.get_all_stake_amounts().values()
+            if trade
+        )
+        available_for_new = risk_budget - deployed
+        if available_for_new < self.min_stake_usd:
+            return 0.0
         stake = balance * self.position_size_pct
         stake = max(stake, self.min_stake_usd)
-        stake = min(stake, self.max_stake_usd)
+        stake = min(stake, self.max_stake_usd, available_for_new)
         return max(min(stake, max_stake), min_stake)
 
     def populate_indicators(self, dataframe: pd.DataFrame, metadata: dict) -> pd.DataFrame:
@@ -357,6 +418,9 @@ TEMPLATE_SPECS: Dict[StrategyTemplate, List[DNASpec]] = {
         DNASpec(name="position_size_pct", type="float", min=0.02, max=0.50, default=0.10),
         DNASpec(name="min_stake_usd", type="float", min=5.0, max=50.0, default=5.0),
         DNASpec(name="max_stake_usd", type="float", min=20.0, max=500.0, default=100.0),
+        DNASpec(name="max_open_trades", type="int", min=1, max=5, default=1),
+        DNASpec(name="risk_capital_pct", type="float", min=0.10, max=0.80, default=0.50),
+        DNASpec(name="reserve_capital_pct", type="float", min=0.05, max=0.30, default=0.10),
     ],
     StrategyTemplate.MEAN_REVERSION: [
         DNASpec(name="bb_period", type="int", min=10, max=50, default=20),
@@ -369,6 +433,9 @@ TEMPLATE_SPECS: Dict[StrategyTemplate, List[DNASpec]] = {
         DNASpec(name="position_size_pct", type="float", min=0.02, max=0.50, default=0.10),
         DNASpec(name="min_stake_usd", type="float", min=5.0, max=50.0, default=5.0),
         DNASpec(name="max_stake_usd", type="float", min=20.0, max=500.0, default=100.0),
+        DNASpec(name="max_open_trades", type="int", min=1, max=5, default=1),
+        DNASpec(name="risk_capital_pct", type="float", min=0.10, max=0.80, default=0.50),
+        DNASpec(name="reserve_capital_pct", type="float", min=0.05, max=0.30, default=0.10),
     ],
     StrategyTemplate.BREAKOUT: [
         DNASpec(name="lookback", type="int", min=10, max=100, default=20),
@@ -378,6 +445,9 @@ TEMPLATE_SPECS: Dict[StrategyTemplate, List[DNASpec]] = {
         DNASpec(name="position_size_pct", type="float", min=0.02, max=0.50, default=0.10),
         DNASpec(name="min_stake_usd", type="float", min=5.0, max=50.0, default=5.0),
         DNASpec(name="max_stake_usd", type="float", min=20.0, max=500.0, default=100.0),
+        DNASpec(name="max_open_trades", type="int", min=1, max=5, default=1),
+        DNASpec(name="risk_capital_pct", type="float", min=0.10, max=0.80, default=0.50),
+        DNASpec(name="reserve_capital_pct", type="float", min=0.05, max=0.30, default=0.10),
     ],
     StrategyTemplate.MOMENTUM: [
         DNASpec(name="momentum_period", type="int", min=5, max=50, default=10),
@@ -387,6 +457,9 @@ TEMPLATE_SPECS: Dict[StrategyTemplate, List[DNASpec]] = {
         DNASpec(name="position_size_pct", type="float", min=0.02, max=0.50, default=0.10),
         DNASpec(name="min_stake_usd", type="float", min=5.0, max=50.0, default=5.0),
         DNASpec(name="max_stake_usd", type="float", min=20.0, max=500.0, default=100.0),
+        DNASpec(name="max_open_trades", type="int", min=1, max=5, default=1),
+        DNASpec(name="risk_capital_pct", type="float", min=0.10, max=0.80, default=0.50),
+        DNASpec(name="reserve_capital_pct", type="float", min=0.05, max=0.30, default=0.10),
     ],
     StrategyTemplate.VOLATILITY: [
         DNASpec(name="atr_period", type="int", min=5, max=30, default=14),
@@ -394,6 +467,9 @@ TEMPLATE_SPECS: Dict[StrategyTemplate, List[DNASpec]] = {
         DNASpec(name="position_size_pct", type="float", min=0.02, max=0.50, default=0.10),
         DNASpec(name="min_stake_usd", type="float", min=5.0, max=50.0, default=5.0),
         DNASpec(name="max_stake_usd", type="float", min=20.0, max=500.0, default=100.0),
+        DNASpec(name="max_open_trades", type="int", min=1, max=5, default=1),
+        DNASpec(name="risk_capital_pct", type="float", min=0.10, max=0.80, default=0.50),
+        DNASpec(name="reserve_capital_pct", type="float", min=0.05, max=0.30, default=0.10),
         DNASpec(name="tp_multiplier", type="float", min=1.0, max=5.0, default=2.0),
         DNASpec(name="sl_multiplier", type="float", min=0.5, max=3.0, default=1.5),
     ],

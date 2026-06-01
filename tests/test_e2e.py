@@ -253,7 +253,8 @@ def test_freqtrade_wrapper_compile():
         template="trend_following",
         dna={"fast_period": 10, "slow_period": 30, "trend_threshold": 0.01,
              "rsi_period": 14, "rsi_overbought": 70, "rsi_oversold": 30,
-             "position_size_pct": 0.10, "min_stake_usd": 5.0, "max_stake_usd": 100.0},
+             "position_size_pct": 0.10, "min_stake_usd": 5.0, "max_stake_usd": 100.0,
+             "max_open_trades": 1, "risk_capital_pct": 0.50, "reserve_capital_pct": 0.10},
     )
     code = FreqtradeWrapper.compile_strategy(record)
     assert "class AthenaStrategy(IStrategy)" in code
@@ -267,7 +268,8 @@ def test_freqtrade_wrapper_backtest():
     params = encoder.to_strategy_params(
         {"fast_period": 10, "slow_period": 30, "trend_threshold": 0.01,
          "rsi_period": 14, "rsi_overbought": 70, "rsi_oversold": 30,
-         "position_size_pct": 0.10, "min_stake_usd": 5.0, "max_stake_usd": 100.0},
+         "position_size_pct": 0.10, "min_stake_usd": 5.0, "max_stake_usd": 100.0,
+         "max_open_trades": 1, "risk_capital_pct": 0.50, "reserve_capital_pct": 0.10},
         StrategyTemplate.TREND_FOLLOWING,
     )
     params["class_name"] = "AthenaStrategy"

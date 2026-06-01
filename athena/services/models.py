@@ -1,5 +1,5 @@
 """Database models for Athena."""
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional
 from sqlalchemy import create_engine, Column, String, Float, Integer, DateTime, JSON, Index
 from sqlalchemy.orm import sessionmaker
@@ -7,6 +7,9 @@ from sqlalchemy.orm import declarative_base
 from athena.common.config import config
 
 Base = declarative_base()
+
+# Timezone-aware UTC factory for SQLAlchemy defaults
+_utcnow = lambda: datetime.now(timezone.utc)
 
 
 class StrategyModel(Base):
@@ -37,8 +40,8 @@ class StrategyModel(Base):
     verdict = Column(String, default="")
     
     # Metadata
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=_utcnow)
+    updated_at = Column(DateTime, default=_utcnow)
     metadata_json = Column(JSON, default=dict)
 
 
@@ -47,7 +50,7 @@ class LiveSessionModel(Base):
 
     id = Column(String, primary_key=True)
     strategy_id = Column(String, nullable=False)
-    started_at = Column(DateTime, default=datetime.utcnow)
+    started_at = Column(DateTime, default=_utcnow)
     stopped_at = Column(DateTime, nullable=True)
     status = Column(String, default="running")
     mode = Column(String, default="paper")
@@ -58,8 +61,8 @@ class LiveSessionModel(Base):
     total_trades_taken = Column(Integer, default=0)
     max_drawdown_seen = Column(Float, default=0.0)
     last_signals = Column(JSON, default=list)
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=_utcnow)
+    updated_at = Column(DateTime, default=_utcnow)
 
 
 class LiveSnapshot(Base):
@@ -69,7 +72,7 @@ class LiveSnapshot(Base):
     id = Column(Integer, primary_key=True, autoincrement=True)
     session_id = Column(String, nullable=False)
     strategy_id = Column(String, nullable=False)
-    timestamp = Column(DateTime, default=datetime.utcnow)
+    timestamp = Column(DateTime, default=_utcnow)
 
     # Raw from bot
     equity = Column(Float, default=0.0)
@@ -89,16 +92,25 @@ class LiveSnapshot(Base):
     drawdown_ratio = Column(Float, default=0.0)          # live / backtest
     is_degraded = Column(String, default="")             # "" | "mild" | "severe"
 
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=_utcnow)
 
     # Index for fast queries on latest snapshots
     __table_args__ = (Index("ix_snapshots_session_time", "session_id", "timestamp"),)
 
 
 # Setup
-def get_engine():
-    return create_engine(config.DATABASE_URL)
+_DB_ENGINE = None
 
+def get_engine():
+    global _DB_ENGINE
+    if _DB_ENGINE is None:
+        _DB_ENGINE = create_engine(
+            config.DATABASE_URL,
+            pool_pre_ping=True,
+            connect_args={"timeout": 30.0, "check_same_thread": False}
+            if config.DATABASE_URL.startswith("sqlite") else {},
+        )
+    return _DB_ENGINE
 def get_session():
     engine = get_engine()
     Session = sessionmaker(bind=engine)

@@ -49,7 +49,22 @@ class AthenaEngine:
     def evolve(self, template: StrategyTemplate, run_gates: bool = True,
                parallel_workers: Optional[int] = None) -> List[StrategyRecord]:
         """Run full GA evolution: generate → backtest → score → gates → promote."""
-        pw = parallel_workers or config.PARALLEL_WORKERS
+        # Check file descriptor limit — freqtrade backtests open exchange sockets
+        import resource
+        soft, hard = resource.getrlimit(resource.RLIMIT_NOFILE)
+        if soft < 4096:
+            try:
+                resource.setrlimit(resource.RLIMIT_NOFILE, (min(4096, hard), hard))
+            except (ValueError, OSError):
+                logger.warning(f"FD limit soft={soft}, hard={hard}. Parallel workers forced to 1.")
+                pw = 1
+            else:
+                pw = parallel_workers or config.PARALLEL_WORKERS
+        else:
+            pw = parallel_workers or config.PARALLEL_WORKERS
+        if pw > 1 and run_gates:
+            logger.warning("Gates + parallel workers can exhaust FDs; consider run_gates=False for quick iteration")
+
         logger.info("=" * 60)
         logger.info(f"AthenaEngine.evolve | template={template.value} pop={self.cfg.population_size} "
                     f"gen={self.cfg.generations} gates={run_gates} workers={pw}")

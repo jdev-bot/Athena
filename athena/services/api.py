@@ -22,6 +22,13 @@ from athena.common.models import GenerationConfig
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     init_db()
+    if config.AUTO_SCHEDULER:
+        from athena.live.scheduler import get_scheduler
+        try:
+            get_scheduler().start()
+        except Exception as exc:
+            import logging
+            logging.getLogger(__name__).warning(f"Auto-scheduler failed to start: {exc}")
     yield
 
 

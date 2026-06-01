@@ -68,14 +68,25 @@ class GAEngine:
             )
             self.population.append(ind)
     
-    def evolve(self, fitness_fn: Callable[[Individual], float]) -> List[Individual]:
-        """Run GA evolution for configured generations."""
+    def evolve(self, fitness_fn: Callable[[Individual], float], parallel_workers: int = 1) -> List[Individual]:
+        """Run GA evolution for configured generations.
+
+        If parallel_workers > 1, fitness evaluation is dispatched to a
+        ThreadPoolExecutor.  The caller's fitness_fn must be thread-safe.
+        """
         for gen in range(self.generations):
             self.generation = gen
             
-            # Evaluate fitness
-            for ind in self.population:
-                ind.fitness = fitness_fn(ind)
+            # Evaluate fitness (parallel or sequential)
+            if parallel_workers > 1:
+                from concurrent.futures import ThreadPoolExecutor
+                with ThreadPoolExecutor(max_workers=parallel_workers) as pool:
+                    results = list(pool.map(fitness_fn, self.population))
+                for ind, fit in zip(self.population, results):
+                    ind.fitness = fit
+            else:
+                for ind in self.population:
+                    ind.fitness = fitness_fn(ind)
             
             # Sort by fitness
             self.population.sort(key=lambda x: x.fitness, reverse=True)
@@ -128,8 +139,15 @@ class GAEngine:
             self.population = new_population
         
         # Final evaluation
-        for ind in self.population:
-            ind.fitness = fitness_fn(ind)
+        if parallel_workers > 1:
+            from concurrent.futures import ThreadPoolExecutor
+            with ThreadPoolExecutor(max_workers=parallel_workers) as pool:
+                results = list(pool.map(fitness_fn, self.population))
+            for ind, fit in zip(self.population, results):
+                ind.fitness = fit
+        else:
+            for ind in self.population:
+                ind.fitness = fitness_fn(ind)
         self.population.sort(key=lambda x: x.fitness, reverse=True)
         
         return self.population

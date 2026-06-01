@@ -11,8 +11,10 @@ Callable from both CLI (orchestrator.py) and API (services/api.py).
 """
 import uuid
 import logging
+import traceback
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
-from typing import List, Optional, Dict, Any
+from typing import List, Optional, Dict, Any, Callable
 from datetime import datetime
 
 from athena.common.models import (
@@ -44,10 +46,13 @@ class AthenaEngine:
 
     # ── public high-level flows ──────────────────────────────────────
 
-    def evolve(self, template: StrategyTemplate, run_gates: bool = True) -> List[StrategyRecord]:
+    def evolve(self, template: StrategyTemplate, run_gates: bool = True,
+               parallel_workers: Optional[int] = None) -> List[StrategyRecord]:
         """Run full GA evolution: generate → backtest → score → gates → promote."""
+        pw = parallel_workers or config.PARALLEL_WORKERS
         logger.info("=" * 60)
-        logger.info(f"AthenaEngine.evolve | template={template.value} pop={self.cfg.population_size} gen={self.cfg.generations}")
+        logger.info(f"AthenaEngine.evolve | template={template.value} pop={self.cfg.population_size} "
+                    f"gen={self.cfg.generations} gates={run_gates} workers={pw}")
         logger.info("=" * 60)
 
         ga = GAEngine(
@@ -70,28 +75,30 @@ class AthenaEngine:
             return record.score.raw_score
 
         # ── Evolve ──
-        population = ga.evolve(fitness_fn)
+        population = ga.evolve(fitness_fn, parallel_workers=pw)
 
         # ── Final evaluation + gates ──
-        records: List[StrategyRecord] = []
-        for ind in population:
-            record = self._individual_to_record(ind)
-            record.performance = self._backtest(record)
-            record.score = self.scorer.score(record.performance)
-
-            if run_gates:
-                record = self._run_gates(record)
-
-            self._persist(record)
-            records.append(record)
+        if pw > 1:
+            records = self._evaluate_parallel(population, run_gates=run_gates)
+        else:
+            records = []
+            for ind in population:
+                record = self._individual_to_record(ind)
+                record.performance = self._backtest(record)
+                record.score = self.scorer.score(record.performance)
+                if run_gates:
+                    record = self._run_gates(record)
+                self._persist(record)
+                records.append(record)
 
         # ── Auto-promote best that passed gates ──
         records.sort(key=lambda r: r.score.raw_score, reverse=True)
         for rec in records:
-            if rec.score.verdict == "promote" and rec.metadata.get("robustness_passed", False):
+            if rec.score.verdict == "promote" and rec.metadata.get("robustness_passed", run_gates is False):
                 self._promote(rec)
 
-        logger.info(f"Best: {records[0].id} score={records[0].score.raw_score:.3f} verdict={records[0].score.verdict}")
+        logger.info(f"Best: {records[0].id} score={records[0].score.raw_score:.3f} "
+                    f"verdict={records[0].score.verdict}")
         return records
 
     def evaluate_record(self, record: StrategyRecord) -> StrategyRecord:
@@ -101,7 +108,7 @@ class AthenaEngine:
         return record
 
     def evaluate(self, strategy_id: str, start_date: Optional[str] = None, end_date: Optional[str] = None) -> StrategyRecord:
-        """Re-evaluate a single stored strategy (used for manual re-run or promotion candidate)."""
+        """Re-evaluate a single stored strategy."""
         session = get_session()
         row = session.query(StrategyModel).filter_by(id=strategy_id).first()
         if not row:
@@ -113,13 +120,15 @@ class AthenaEngine:
         self._persist(record)
         return record
 
-    def promote(self, strategy_id: str) -> StrategyRecord:
+    def promote(self, strategy_id: str, auto_paper: bool = False) -> StrategyRecord:
         """Run gates on a strategy and, if passed, promote to PROMOTED status + export."""
         record = self.evaluate(strategy_id)
         record = self._run_gates(record)
         if record.score.verdict == "promote" and record.metadata.get("robustness_passed", False):
             self._promote(record)
             logger.info(f"Promoted {strategy_id}")
+            if auto_paper:
+                self._auto_paper(record)
         else:
             logger.info(f"Promotion refused for {strategy_id}: gates={record.metadata.get('robustness_passed')} verdict={record.score.verdict}")
         return record
@@ -141,18 +150,43 @@ class AthenaEngine:
         logger.info(f"Deployed {strategy_id} → {path}")
         return path
 
-    def run_search(self, templates: Optional[List[StrategyTemplate]] = None) -> Dict[str, List[StrategyRecord]]:
+    def run_search(self, templates: Optional[List[StrategyTemplate]] = None,
+                   run_gates: bool = True) -> Dict[str, List[StrategyRecord]]:
         """Multi-template autonomous search — evolve each template and return champions."""
         templates = templates or list(StrategyTemplate)
         results: Dict[str, List[StrategyRecord]] = {}
         for tpl in templates:
             try:
-                records = self.evolve(tpl, run_gates=True)
+                records = self.evolve(tpl, run_gates=run_gates)
                 results[tpl.value] = records
             except Exception as exc:
                 logger.error(f"Template {tpl.value} failed: {exc}")
                 results[tpl.value] = []
         return results
+
+    # ── parallel evaluation ─────────────────────────────────────────
+
+    def _evaluate_parallel(self, population: List[Individual], run_gates: bool = False) -> List[StrategyRecord]:
+        """Evaluate a generation of individuals in parallel using ThreadPoolExecutor."""
+        pw = config.PARALLEL_WORKERS
+        records = []
+
+        def _eval_one(ind: Individual) -> StrategyRecord:
+            record = self._individual_to_record(ind)
+            try:
+                record.performance = self._backtest(record)
+                record.score = self.scorer.score(record.performance)
+                if run_gates:
+                    record = self._run_gates(record)
+                self._persist(record)
+            except Exception as exc:
+                logger.error(f"Parallel eval failed for {record.id}: {exc}")
+                record.score = ScoreResult(raw_score=0.0, verdict="demote")
+            return record
+
+        with ThreadPoolExecutor(max_workers=pw) as pool:
+            records = list(pool.map(_eval_one, population))
+        return records
 
     # ── internal helpers ───────────────────────────────────────────
 
@@ -231,11 +265,25 @@ class AthenaEngine:
         """Mark strategy as PROMOTED and export to deployable directory."""
         record.status = StrategyStatus.PROMOTED
         self._persist(record)
-        # Export code
         try:
             self.deploy(record.id, target_dir=config.GENERATED_DIR)
         except Exception as exc:
             logger.error(f"Deploy failed for {record.id}: {exc}")
+
+    def _auto_paper(self, record: StrategyRecord) -> None:
+        """Best-effort: start a paper trading session for a promoted strategy."""
+        try:
+            from athena.live.runner import LiveRunner
+            runner = LiveRunner(
+                strategy_id=record.id,
+                mode="paper",
+                risk={"max_drawdown": 0.15, "daily_loss_limit": 0.10},
+            )
+            import asyncio
+            asyncio.create_task(runner.start())
+            logger.info(f"Auto-paper started for {record.id}")
+        except Exception as exc:
+            logger.warning(f"Auto-paper failed for {record.id}: {exc}")
 
     def _persist(self, record: StrategyRecord) -> None:
         """Upsert StrategyRecord to DB."""

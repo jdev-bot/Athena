@@ -113,19 +113,17 @@ class MonteCarloStressTest:
     SHUFFLES = 200
 
     def run(self, record: StrategyRecord, start_date: str, end_date: str) -> MonteCarloResult:
-        """Run backtest, extract daily PnL, shuffle, compute significance."""
+        """Run backtest, extract per-trade PnL, shuffle order, compute significance."""
         code = self._compile(record)
         wrapper = FreqtradeWrapper()
-        bt = wrapper.run_backtest(code, start_date=start_date, end_date=end_date, exchange="binance", symbol="BTC-USD")
+        bt = wrapper.run_backtest(
+            code, start_date=start_date, end_date=end_date,
+            exchange="binance", symbol="BTC-USD", return_trades=True,
+        )
         original_sharpe = bt.get("sharpe", 0.0)
+        trades = bt.get("trades", [])
 
-        # Freqtrade backtest result doesn't expose daily returns in its simple dict;
-        # we approximate with bootstrapped Sharpe from total_return + total_trades.
-        # A more rigorous implementation would parse Freqtrade's trade list.
-        # For now, use synthetic daily-return array from total_return.
-        total_return = bt.get("total_return", 0.0)
-        total_trades = bt.get("total_trades", 0)
-        if total_trades < 5:
+        if len(trades) < 5:
             return MonteCarloResult(
                 original_sharpe=original_sharpe,
                 shuffled_sharpe_mean=0.0,
@@ -134,31 +132,39 @@ class MonteCarloStressTest:
                 is_significant=False,
             )
 
-        # Approximate daily returns as uniform per-trade returns
-        days = max((datetime.strptime(end_date, "%Y-%m-%d") - datetime.strptime(start_date, "%Y-%m-%d")).days, 1)
-        avg_daily_return = total_return / days
-        # Assume volatility scales with sqrt of trades (rough)
-        synthetic_daily = np.random.normal(avg_daily_return, abs(avg_daily_return) * 2, days)
+        # Extract per-trade returns (use profit_abs)
+        trade_returns = np.array([t["profit"] for t in trades if t.get("profit") is not None], dtype=float)
+        if len(trade_returns) < 3:
+            return MonteCarloResult(
+                original_sharpe=original_sharpe,
+                shuffled_sharpe_mean=0.0,
+                shuffled_sharpe_std=0.0,
+                p_value=1.0,
+                is_significant=False,
+            )
+
+        # Original Sharpe from trade returns (annualized roughly assuming ~1 trade/day)
+        original_trade_sharpe = self._sharpe_from_returns(trade_returns)
 
         shuffled_sharpes = []
         for _ in range(self.SHUFFLES):
-            np.random.shuffle(synthetic_daily)
-            shuffled_sharpes.append(self._sharpe_from_returns(synthetic_daily))
+            np.random.shuffle(trade_returns)
+            shuffled_sharpes.append(self._sharpe_from_returns(trade_returns))
 
         shuffled_mean = float(np.mean(shuffled_sharpes))
         shuffled_std = float(np.std(shuffled_sharpes))
 
         # P-value: probability that shuffled Sharpe >= original
         if shuffled_std > 0:
-            z = (shuffled_mean - original_sharpe) / shuffled_std
+            z = (shuffled_mean - original_trade_sharpe) / shuffled_std
             p_value = 1.0 - self._normal_cdf(z)
         else:
-            p_value = 1.0 if original_sharpe < shuffled_mean else 0.0
+            p_value = 1.0 if original_trade_sharpe < shuffled_mean else 0.0
 
         is_significant = p_value <= self.P_VALUE_THRESHOLD
 
         return MonteCarloResult(
-            original_sharpe=original_sharpe,
+            original_sharpe=original_trade_sharpe,
             shuffled_sharpe_mean=shuffled_mean,
             shuffled_sharpe_std=shuffled_std,
             p_value=p_value,

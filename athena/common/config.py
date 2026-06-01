@@ -41,6 +41,13 @@ class Config:
     PROFIT_FACTOR_WEIGHT = 0.20
     TOTAL_RETURN_WEIGHT = 0.15
     
+    # Parallel evaluation
+    PARALLEL_WORKERS = int(os.getenv("PARALLEL_WORKERS", "1"))
+    
+    # Scheduler
+    AUTO_SCHEDULER = os.getenv("AUTO_SCHEDULER", "false").lower() in ("true", "1", "yes")
+    SCHEDULER_INTERVAL_SECONDS = int(os.getenv("SCHEDULER_INTERVAL", "3600"))
+    
     # Server
     API_PORT = int(os.getenv("API_PORT", "8000"))
     WS_PORT = int(os.getenv("WS_PORT", "8001"))

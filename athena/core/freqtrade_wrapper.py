@@ -192,6 +192,7 @@ class FreqtradeWrapper:
         exchange: str = "binance",
         symbol: str = "BTC-USD",
         timeframe: str = "1h",
+        return_trades: bool = False,
     ) -> Dict[str, Any]:
         """Run a freqtrade backtest with real ccxt-sourced market data."""
         pair = _to_ft_pair(symbol)
@@ -232,7 +233,7 @@ class FreqtradeWrapper:
             if not strategy_results:
                 return self._empty_metrics()
 
-            return {
+            out = {
                 "total_return": strategy_results.get("profit_total", 0.0),
                 "sharpe": strategy_results.get("sharpe", 0.0),
                 "sortino": strategy_results.get("sortino", 0.0),
@@ -243,6 +244,24 @@ class FreqtradeWrapper:
                 "avg_trade": strategy_results.get("avg_profit_pct", 0.0) or 0.0,
                 "profit_factor": strategy_results.get("profit_factor", 0.0) or 0.0,
             }
+
+            if return_trades:
+                from freqtrade.persistence import LocalTrade
+                trade_pnls = []
+                if hasattr(LocalTrade, 'bt_trades') and LocalTrade.bt_trades:
+                    for t in LocalTrade.bt_trades:
+                        if hasattr(t, 'close_profit') and t.close_profit is not None and not t.is_open:
+                            trade_pnls.append({
+                                "profit": float(t.close_profit),
+                                "profit_abs": float(t.close_profit_abs) if t.close_profit_abs else 0.0,
+                                "close_date": t.close_date.isoformat() if t.close_date else None,
+                                "is_open": bool(t.is_open),
+                            })
+                out["trades"] = trade_pnls
+                LocalTrade.reset_bt_elements()  # clean up for next backtest
+
+            return out
+
         except Exception as exc:
             import traceback
             return {

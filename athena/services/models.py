@@ -2,8 +2,8 @@
 from datetime import datetime
 from typing import Optional
 from sqlalchemy import create_engine, Column, String, Float, Integer, DateTime, JSON
-from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
+from sqlalchemy.orm import declarative_base
 from athena.common.config import config
 
 Base = declarative_base()

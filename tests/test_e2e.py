@@ -283,40 +283,50 @@ def test_freqtrade_wrapper_backtest():
 
 
 def test_live_start_stop(client):
-    # Create strategy
-    r = client.post("/strategies/generate", json={"template": "trend_following", "count": 1})
-    strat = r.json()["strategies"][0]
-    sid = strat["id"]
+    # Patch subprocess so we don't actually spawn a freqtrade bot in tests
+    import subprocess as subprocess_mod
+    from unittest.mock import MagicMock, patch
 
-    # Start live session
-    r2 = client.post("/live/start", json={
-        "strategy_id": sid,
-        "mode": "paper",
-        "max_drawdown": 0.15,
-        "daily_loss_limit": 0.10,
-    })
-    assert r2.status_code == 200
-    body = r2.json()
-    session_id = body["session_id"]
-    assert body["status"] == "running"
-    assert body["strategy_id"] == sid
+    mock_proc = MagicMock()
+    mock_proc.pid = 12345
+    mock_proc.poll.return_value = None
+    mock_proc.send_signal = MagicMock()
+    mock_proc.wait = MagicMock(return_value=0)
 
-    # Status
-    r3 = client.get(f"/live/status?session_id={session_id}")
-    assert r3.status_code == 200
-    status = r3.json()
-    assert status["session_id"] == session_id
-    assert status["mode"] == "paper"
-    assert status["equity"] is not None
+    with patch.object(subprocess_mod, "Popen", return_value=mock_proc):
+        # Create strategy
+        r = client.post("/strategies/generate", json={"template": "trend_following", "count": 1})
+        strat = r.json()["strategies"][0]
+        sid = strat["id"]
 
-    # Stop
-    r4 = client.post("/live/stop", params={"session_id": session_id})
-    assert r4.status_code == 200
-    assert r4.json()["status"] == "stopped"
+        # Start live session
+        r2 = client.post("/live/start", json={
+            "strategy_id": sid,
+            "mode": "paper",
+            "max_drawdown": 0.15,
+            "daily_loss_limit": 0.10,
+        })
+        assert r2.status_code == 200
+        body = r2.json()
+        session_id = body["session_id"]
+        assert body["status"] == "running"
+        assert body["strategy_id"] == sid
 
-    # Status after stop should 404 (runner removed from in-memory registry)
-    r5 = client.get(f"/live/status?session_id={session_id}")
-    assert r5.status_code == 404
+        # Status (bot not fully booted in 3s, falls back to DB)
+        r3 = client.get(f"/live/status?session_id={session_id}")
+        assert r3.status_code == 200
+        status = r3.json()
+        assert status["session_id"] == session_id
+        assert status["equity"] is not None
+
+        # Stop
+        r4 = client.post("/live/stop", params={"session_id": session_id})
+        assert r4.status_code == 200
+        assert r4.json()["status"] == "stopped"
+
+        # Status after stop should 404 (runner removed from in-memory registry)
+        r5 = client.get(f"/live/status?session_id={session_id}")
+        assert r5.status_code == 404
 
 
 def test_live_start_invalid_mode(client):

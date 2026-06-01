@@ -81,6 +81,9 @@ class LiveStartRequest(BaseModel):
     mode: str = "paper"  # paper | live
     max_drawdown: float = 0.15
     daily_loss_limit: float = 0.10
+    exchange_key: str = ""
+    exchange_secret: str = ""
+    sandbox: bool = False
 
 
 class LiveStartResponse(BaseModel):
@@ -100,6 +103,8 @@ class LiveStatusResponse(BaseModel):
     started_at: Optional[str] = None
     stopped_at: Optional[str] = None
     last_signals: list = []
+    profit_closed_pct: float = 0.0
+    profit_all_pct: float = 0.0
 
 
 # ── live runner registry (in-memory, holds async tasks) ──────────
@@ -318,6 +323,9 @@ async def live_start(req: LiveStartRequest):
         strategy_id=req.strategy_id,
         mode=req.mode,
         risk={"max_drawdown": req.max_drawdown, "daily_loss_limit": req.daily_loss_limit},
+        exchange_key=req.exchange_key,
+        exchange_secret=req.exchange_secret,
+        sandbox=req.sandbox,
     )
     await runner.start()
     _runners[runner.session_id] = runner

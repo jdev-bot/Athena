@@ -89,12 +89,16 @@ class AthenaOrchestrator:
 
         # Fitness function
         def fitness_fn(individual: Individual) -> float:
-            # Create record
+            # Merge metadata into DNA vector
+            dna_vector = dict(individual.dna)
+            dna_vector.setdefault("timeframe", self.config.timeframe)
+            dna_vector.setdefault("symbol", self.config.symbols[0] if self.config.symbols else "BTC-USD")
+
             record = StrategyRecord(
                 id=individual.id,
                 name=f"{template.value}_{individual.id[-6:]}",
                 template=template,
-                dna=StrategyDNA(template=template, vector=individual.dna),
+                dna=StrategyDNA(template=template, vector=dna_vector),
                 generation=individual.generation,
             )
 
@@ -121,6 +125,12 @@ class AthenaOrchestrator:
 
         # Convert to records
         records = ga.to_strategy_records()
+
+        # Inject timeframe / symbol from generation config into DNA
+        for record in records:
+            if isinstance(record.dna.vector, dict):
+                record.dna.vector.setdefault("timeframe", self.config.timeframe)
+                record.dna.vector.setdefault("symbol", self.config.symbols[0] if self.config.symbols else "BTC-USD")
 
         # Update records with actual scores
         for record in records:

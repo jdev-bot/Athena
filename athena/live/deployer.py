@@ -11,6 +11,7 @@ from typing import Any, Dict
 from athena.core.freqtrade_wrapper import FreqtradeWrapper
 from athena.services.models import get_session, StrategyModel
 from athena.live.freqtrade_config import build_config, write_config
+from athena.live.data_downloader import download_pair_data
 
 
 class Deployer:
@@ -57,7 +58,7 @@ class Deployer:
         (strat_dir / "AthenaStrategy.py").write_text(strategy_code)
 
         # Write config
-        pair = self._symbol_to_pair(record.dna.get("symbol", "BTC-USD"))
+        pair = Deployer._symbol_to_pair(record.dna.get("symbol", "BTC-USD"))
         timeframe = record.dna.get("timeframe", "1h")
         # Read sizing / risk params from DNA vector
         dna_vector = record.dna.get("vector", {}) if isinstance(record.dna, dict) else {}
@@ -81,6 +82,22 @@ class Deployer:
         )
         write_config(cfg, deploy_dir / "config.json")
 
+        # Download historical candles so Freqtrade can warm up indicators
+        try:
+            download_pair_data(
+                deploy_dir=deploy_dir,
+                pair=pair,
+                timeframe=timeframe,
+                days=3,
+                exchange_name="binance",
+                sandbox=sandbox,
+            )
+        except Exception as exc:
+            # Don't fail deploy if download errors — bot may still work if
+            # exchange has enough warmup via ccxt streaming
+            import logging
+            logging.getLogger(__name__).warning(f"Data download failed: {exc}")
+
         # Data + logs dirs
         (deploy_dir / "data").mkdir(exist_ok=True)
         (deploy_dir / "logs").mkdir(exist_ok=True)
@@ -95,9 +112,11 @@ class Deployer:
             shutil.rmtree(deploy_dir, ignore_errors=True)
 
     @staticmethod
-    def _symbol_to_pair(symbol: str) -> str:
-        """BTC-USD → BTC/USDT for Freqtrade."""
+    def _symbol_to_pair(symbol: str, futures: bool = True) -> str:
+        """BTC-USD → BTC/USDT:USDT (futures) or BTC/USDT (spot)."""
         pair = symbol.replace("-", "/")
         if pair.endswith("USD") and not pair.endswith("USDT"):
             pair = pair + "T"
+        if futures:
+            pair = pair + ":USDT"
         return pair

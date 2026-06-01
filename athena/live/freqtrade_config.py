@@ -132,25 +132,6 @@ def build_config(
         "trailing_stop_positive_offset": dna.get("trailing_stop_offset", 0.02),
         "trailing_only_offset_is_reached": True,
 
-        # ── protections (Freqtrade native circuit breakers) ──
-        "enable_protections": True,
-        "protections": [
-            {
-                "method": "MaxDrawdown",
-                "lookback_period_candles": 48,
-                "trade_limit": 1,
-                "stop_duration_candles": 12,
-                "max_allowed_drawdown": risk.get("max_drawdown", 0.15),
-            },
-            {
-                "method": "StoplossGuard",
-                "lookback_period_candles": 24,
-                "trade_limit": 4,
-                "stop_duration_candles": 6,
-                "only_per_pair": False,
-            },
-        ],
-
         # ── fee ──
         "fee": fee,
 

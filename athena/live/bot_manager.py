@@ -162,15 +162,29 @@ class BotManager:
         try:
             profit = self._api_get(url, "/api/v1/profit", meta)
             balance = self._api_get(url, "/api/v1/balance", meta)
-            status_msg = self._api_get(url, "/api/v1/status", meta)
+            status_raw = self._api_get(url, "/api/v1/status", meta)
         except Exception:
             # Bot not ready yet — fall back to DB
             return self._db_status(session_id)
 
+        # Defensive: some endpoints return lists
+        if isinstance(status_raw, list) and status_raw:
+            status_msg = status_raw[0]
+        elif isinstance(status_raw, dict):
+            status_msg = status_raw
+        else:
+            status_msg = {"status": "running"}
+
         # Compute drawdown from profit data
-        starting = balance.get("starting_capital", 10_000.0)
-        total_bot = balance.get("total_bot", starting)
+        starting = balance.get("starting_capital", 50.0) if isinstance(balance, dict) else 50.0
+        total_bot = balance.get("total_bot", starting) if isinstance(balance, dict) else starting
         dd = (starting - total_bot) / starting if total_bot < starting else 0.0
+
+        # Defensive profit parsing
+        if isinstance(profit, list) and profit:
+            profit = profit[0]
+        elif not isinstance(profit, dict):
+            profit = {}
 
         return {
             "session_id": session_id,

@@ -8,11 +8,11 @@ from datetime import datetime
 from typing import Optional
 
 import numpy as np
-import jesse.indicators as ta
-from jesse.services import logger
+import pandas as pd
+import pandas_ta as ta
 
 from athena.live.feed import LiveFeed
-from athena.core.jesse_wrapper import JesseWrapper
+from athena.core.freqtrade_wrapper import FreqtradeWrapper
 from athena.services.models import get_session, StrategyModel, LiveSessionModel
 
 

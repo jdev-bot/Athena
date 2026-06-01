@@ -242,9 +242,9 @@ def test_orchestrator_roundtrip():
     assert best.score.raw_score >= 0.0
 
 
-# ── JesseWrapper: compile + backtest ────────────────────────────────
-def test_jesse_wrapper_compile():
-    from athena.core.jesse_wrapper import JesseWrapper
+# ── FreqtradeWrapper: compile + backtest ───────────────────────────
+def test_freqtrade_wrapper_compile():
+    from athena.core.freqtrade_wrapper import FreqtradeWrapper
     from athena.services.models import StrategyModel
 
     record = StrategyModel(
@@ -255,9 +255,31 @@ def test_jesse_wrapper_compile():
              "rsi_period": 14, "rsi_overbought": 70, "rsi_oversold": 30,
              "position_size": 0.1},
     )
-    code = JesseWrapper.compile_strategy(record)
-    assert "class AthenaStrategy" in code
-    assert "should_long" in code
+    code = FreqtradeWrapper.compile_strategy(record)
+    assert "class AthenaStrategy(IStrategy)" in code
+    assert "populate_entry_trend" in code
+
+
+def test_freqtrade_wrapper_backtest():
+    from athena.core.freqtrade_wrapper import FreqtradeWrapper
+    from athena.generator.templates import TEMPLATE_MAP
+    encoder = DNAEncoder()
+    params = encoder.to_strategy_params(
+        {"fast_period": 10, "slow_period": 30, "trend_threshold": 0.01,
+         "rsi_period": 14, "rsi_overbought": 70, "rsi_oversold": 30,
+         "position_size": 0.1},
+        StrategyTemplate.TREND_FOLLOWING,
+    )
+    params["class_name"] = "AthenaStrategy"
+    params["template_name"] = "trend_following"
+    params["timeframe"] = "1h"
+    template = TEMPLATE_MAP.get(StrategyTemplate.TREND_FOLLOWING)
+    code = template.format(**params)
+    wrapper = FreqtradeWrapper()
+    result = wrapper.run_backtest(code, start_date="2024-01-01", end_date="2024-01-15")
+    assert "error" not in result or result["total_trades"] == 0
+    assert isinstance(result["total_return"], (int, float))
+    assert isinstance(result["total_trades"], int)
 
 
 def test_live_start_stop(client):
@@ -305,21 +327,3 @@ def test_live_start_invalid_mode(client):
         "mode": "invalid",
     })
     assert r2.status_code == 400
-
-
-def test_jesse_wrapper_backtest():
-    from athena.core.jesse_wrapper import JesseWrapper
-    wrapper = JesseWrapper()
-    code = """
-from jesse.strategies import Strategy
-class AthenaStrategy(Strategy):
-    def should_long(self): return False
-    def go_long(self): pass
-    def should_short(self): return False
-    def go_short(self): pass
-    def should_cancel(self): return False
-"""
-    result = wrapper.run_backtest(code, start_date="2024-01-01", end_date="2024-01-15")
-    assert "error" not in result
-    assert isinstance(result["total_return"], (int, float))
-    assert isinstance(result["total_trades"], int)

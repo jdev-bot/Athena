@@ -5,12 +5,13 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "athena"
 version = "0.1.0"
-description = "AI strategy generator on Jesse trading framework"
+description = "AI strategy generator on Freqtrade framework"
 authors = [{name="Athena Team"}]
 requires-python = ">=3.10"
 dependencies = [
-    "jesse",
+    "freqtrade",
     "ccxt",
+    "pandas-ta",
     "fastapi",
     "uvicorn",
     "sqlalchemy",
@@ -28,15 +29,5 @@ dev = [
     "mypy",
 ]
 
-[tool.setuptools.packages.find]
-where = ["."]
-include = ["athena*"]
-
-[tool.black]
-line-length = 100
-
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-
-[tool.ruff]
-line-length = 100

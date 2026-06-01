@@ -16,7 +16,7 @@ from athena.services.models import init_db, get_session, StrategyModel
 from athena.generator.dna import DNAEncoder
 from athena.generator.templates import TEMPLATE_MAP, TEMPLATE_SPECS
 from athena.common.config import config
-from athena.core.jesse_wrapper import JesseWrapper
+from athena.core.freqtrade_wrapper import FreqtradeWrapper
 from athena.live.runner import LiveRunner
 
 
@@ -108,18 +108,20 @@ _runners: dict[str, LiveRunner] = {}
 
 # ── helpers ────────────────────────────────────────────────────────
 def _compile_strategy(record) -> str:
-    """Render Jesse strategy source from DB record."""
+    """Render Freqtrade strategy source from DB record."""
     encoder = DNAEncoder()
     params = encoder.to_strategy_params(record.dna, StrategyTemplate(record.template))
     params["class_name"] = "AthenaStrategy"
+    params["template_name"] = StrategyTemplate(record.template).value
+    params["timeframe"] = getattr(record, "timeframe", "1h")
     template = TEMPLATE_MAP.get(StrategyTemplate(record.template))
     return template.format(**params)
 
 
-def _run_jesse_backtest(record, start_date: str, end_date: str) -> dict:
-    """Run Jesse backtest with real market data via JesseWrapper."""
+def _run_freqtrade_backtest(record, start_date: str, end_date: str) -> dict:
+    """Run Freqtrade backtest with real market data via FreqtradeWrapper."""
     code = _compile_strategy(record)
-    wrapper = JesseWrapper()
+    wrapper = FreqtradeWrapper()
     metrics = wrapper.run_backtest(
         code, start_date=start_date, end_date=end_date,
         exchange="binance", symbol="BTC-USD", timeframe="1h",
@@ -222,7 +224,7 @@ async def run_backtest(req: BacktestRequest):
     row.status = StrategyStatus.BACKTEST_RUNNING.value
     session.commit()
 
-    metrics = _run_jesse_backtest(row, req.start_date, req.end_date)
+    metrics = _run_freqtrade_backtest(row, req.start_date, req.end_date)
 
     if "error" in metrics:
         row.status = StrategyStatus.BACKTEST_FAILED.value

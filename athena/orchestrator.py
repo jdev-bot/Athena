@@ -32,33 +32,34 @@ class AthenaOrchestrator:
         init_db()
         
     def generate_strategy_code(self, record: StrategyRecord) -> str:
-        """Generate Jesse-compatible strategy Python code."""
+        """Generate Freqtrade-compatible strategy Python code."""
         template = TEMPLATE_MAP.get(record.dna.template)
         if not template:
             raise ValueError(f"Unknown template: {record.dna.template}")
-        
+
         params = self.encoder.to_strategy_params(record.dna.vector, record.dna.template)
-        params['class_name'] = f"Strategy_{record.id.replace('-', '_')}"
-        
+        params['class_name'] = 'AthenaStrategy'
+        params['template_name'] = record.dna.template.value
+        params['timeframe'] = getattr(record, 'timeframe', '1h')
+
         return template.format(**params)
     
     def evaluate_strategy(self, record: StrategyRecord) -> PerformanceMetrics:
         """Run backtest and return metrics."""
-        from athena.core.jesse_wrapper import JesseWrapper
-        wrapper = JesseWrapper()
+        from athena.core.freqtrade_wrapper import FreqtradeWrapper
+        wrapper = FreqtradeWrapper()
         code = self.generate_strategy_code(record)
-        result = wrapper.run_backtest(code)
-        
+        result = wrapper.run_backtest(code, exchange="binance", symbol="BTC-USD")
         return PerformanceMetrics(
-            total_return=result.get("total_return", 0.0),
-            sharpe=result.get("sharpe", 0.0),
-            sortino=result.get("sortino", 0.0),
-            calmar=result.get("calmar", 0.0),
-            win_rate=result.get("win_rate", 0.0),
-            max_drawdown=result.get("max_drawdown", 0.0),
-            total_trades=result.get("total_trades", 0),
-            avg_trade=result.get("avg_trade", 0.0),
-            profit_factor=result.get("profit_factor", 0.0),
+            total_return=float(result.get("total_return", 0.0)),
+            sharpe=float(result.get("sharpe", 0.0)),
+            sortino=float(result.get("sortino", 0.0)),
+            calmar=float(result.get("calmar", 0.0)),
+            win_rate=float(result.get("win_rate", 0.0)),
+            max_drawdown=float(result.get("max_drawdown", 0.0)),
+            total_trades=int(result.get("total_trades", 0)),
+            avg_trade=float(result.get("avg_trade", 0.0)),
+            profit_factor=float(result.get("profit_factor", 0.0)),
         )
     
     def run_generation(self, template: StrategyTemplate) -> List[StrategyRecord]:

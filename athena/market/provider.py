@@ -4,7 +4,7 @@ import csv
 import time
 from pathlib import Path
 from datetime import datetime
-from typing import List, Optional, Tuple
+from typing import List, Optional
 import numpy as np
 
 import ccxt
@@ -81,7 +81,7 @@ class MarketDataProvider:
     def load_cached(
         self, symbol: str = "BTC/USDT", timeframe: str = "1m"
     ) -> np.ndarray:
-        """Load cached candles from disk and return a Jesse-compatible numpy array."""
+        """Load cached candles from disk and return a numpy array."""
         path = _cache_path(self.exchange.id, symbol, timeframe)
         if not path.exists():
             raise FileNotFoundError(f"No cached candles at {path}. Run fetch_and_cache() first.")
@@ -100,30 +100,6 @@ class MarketDataProvider:
                     ]
                 )
         return np.array(candles, dtype=np.float64)
-
-    def candles_to_jesse_format(
-        self, symbol: str = "BTC/USDT", timeframe: str = "1m",
-        exchange_name: Optional[str] = None
-    ) -> Tuple[dict, dict]:
-        """Return (candles_dict, warmup_dict) for jesse.research.backtest()."""
-        candles = self.load_cached(symbol, timeframe)
-        key = f"{exchange_name or self.exchange.id}-{symbol.replace('/', '-')}"
-        warmup = candles[:240] if len(candles) > 240 else candles
-        candle_struct = {
-            key: {
-                "exchange": exchange_name or self.exchange.id,
-                "symbol": symbol.replace("/", "-"),
-                "candles": candles,
-            }
-        }
-        warmup_struct = {
-            key: {
-                "exchange": exchange_name or self.exchange.id,
-                "symbol": symbol.replace("/", "-"),
-                "candles": warmup,
-            }
-        }
-        return candle_struct, warmup_struct
 
     # ── real-time streaming (forward test) ─────────────────────────
     def watch_ohlcv(self, symbol: str = "BTC/USDT", timeframe: str = "1m"):

@@ -17,8 +17,8 @@ class Config:
     DATA_DIR.mkdir(parents=True, exist_ok=True)
     DATABASE_URL = os.getenv("DATABASE_URL", f"sqlite:///{DATA_DIR / 'athena.db'}")
     
-    # Jesse
-    JESSE_CONFIG_PATH = PROJECT_ROOT / "config" / "jesse_config.py"
+    # Backtesting framework
+    BACKTEST_FRAMEWORK = "freqtrade"
     
     # Generator
     DEFAULT_POPULATION_SIZE = int(os.getenv("POPULATION_SIZE", "30"))
@@ -29,15 +29,17 @@ class Config:
     
     # Evaluator
     WALK_FORWARD_TRAIN_RATIO = 0.7
-    PROMOTE_THRESHOLD = 0.35
-    DEMOTE_THRESHOLD = 0.15
+    PROMOTE_THRESHOLD = 0.25
+    DEMOTE_THRESHOLD = 0.08
     RETIRE_AFTER_DEMOTIONS = 3
-    
-    # Scoring weights
-    SHARPE_WEIGHT = 0.40
-    SORTINO_WEIGHT = 0.30
-    CALMAR_WEIGHT = 0.20
-    WIN_RATE_WEIGHT = 0.10
+
+    # Scoring weights (tuned for short-term data)
+    SHARPE_WEIGHT = 0.15
+    SORTINO_WEIGHT = 0.15
+    CALMAR_WEIGHT = 0.10
+    WIN_RATE_WEIGHT = 0.25
+    PROFIT_FACTOR_WEIGHT = 0.20
+    TOTAL_RETURN_WEIGHT = 0.15
     
     # Server
     API_PORT = int(os.getenv("API_PORT", "8000"))

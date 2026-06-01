@@ -298,7 +298,7 @@ async def get_strategy(strategy_id: str):
 
 @app.post("/backtests/run", response_model=BacktestResponse)
 async def run_backtest(req: BacktestRequest):
-    """Run a Jesse backtest for a stored strategy using real market data."""
+    """Run a Freqtrade backtest for a stored strategy using real market data."""
     session = get_session()
     row = session.query(StrategyModel).filter(StrategyModel.id == req.strategy_id).first()
     if not row:

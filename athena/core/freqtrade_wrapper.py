@@ -233,7 +233,7 @@ class FreqtradeWrapper:
                 return self._empty_metrics()
 
             return {
-                "total_return": strategy_results.get("profit_total_pct", 0.0),
+                "total_return": strategy_results.get("profit_total", 0.0),
                 "sharpe": strategy_results.get("sharpe", 0.0),
                 "sortino": strategy_results.get("sortino", 0.0),
                 "calmar": strategy_results.get("calmar", 0.0),

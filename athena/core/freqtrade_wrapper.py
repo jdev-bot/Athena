@@ -1,11 +1,14 @@
 """Core Freqtrade integration — backtesting via programmatic Freqtrade API with real market data."""
 import os
 import json
+import logging
 import tempfile
 import shutil
 from pathlib import Path
 from typing import Any, Dict
 from datetime import datetime
+
+logger = logging.getLogger(__name__)
 
 import pandas as pd
 import numpy as np
@@ -28,16 +31,19 @@ from athena.market.provider import MarketDataProvider
 
 # ── helpers ─────────────────────────────────────────────────────
 def _to_ft_pair(symbol: str) -> str:
-    """BTC-USD → BTC/USDT for freqtrade."""
+    """BTC-USD → BTC/USDT:USDT (Binance USD-M futures)."""
     pair = symbol.replace("-", "/")
     if pair.endswith("USD") and not pair.endswith("USDT"):
         pair = pair + "T"
+    # Add futures settlement suffix required by Freqtrade futures mode
+    if not pair.endswith(":USDT"):
+        pair = pair + ":USDT"
     return pair
 
 
 def _pair_to_key(pair: str) -> str:
-    """BTC/USDT → BTC_USDT for filenames."""
-    return pair.replace("/", "_")
+    """BTC/USDT:USDT → BTC_USDT_USDT for filenames."""
+    return pair.replace("/", "_").replace(":", "_")
 
 
 class FreqtradeWrapper:
@@ -66,50 +72,29 @@ class FreqtradeWrapper:
         cfg = {
             "strategy": "AthenaStrategy",
             "strategy_path": str(strat_dir),
+            "user_data_dir": str(tmpdir),
             "timeframe": timeframe,
-            "timeframe_detail": None,
             "pairs": [pair],
             "stake_currency": "USDT",
             "stake_amount": "unlimited",
-            "tradable_balance_ratio": 0.99,
+            "tradable_balance_ratio": 1.0,
             "fiat_display_currency": "USD",
             "dry_run": True,
-            "dry_run_wallet": 50.0,
+            "dry_run_wallet": 500.0,
             "max_open_trades": 1,
             "cancel_open_orders_on_exit": True,
             "amend_last_stake_amount": False,
             "position_adjustment_enable": False,
             "max_entry_position_adjustment": 0,
-            "use_exit_signal": True,
+            # Do NOT set use_exit_signal here; respect strategy attribute
             "exit_profit_only": False,
             "ignore_roi_if_entry_signal": False,
             "entry_pricing": {
-                "price_side": "other",
-                "use_order_book": True,
-                "order_book_top": 1,
-                "price_last_balance": 0.0,
-                "check_depth_of_market": {"enabled": False, "bids_to_ask_delta": 1},
+                "price_side": "other", "use_order_book": True, "order_book_top": 1, "price_last_balance": 0.0, "check_depth_of_market": {"enabled": False, "bids_to_ask_delta": 1},
             },
-            "exit_pricing": {
-                "price_side": "other",
-                "use_order_book": True,
-                "order_book_top": 1,
-            },
-            "order_types": {
-                "entry": "market",
-                "exit": "market",
-                "emergency_exit": "market",
-                "force_exit": "market",
-                "stoploss": "market",
-                "take_profit": "limit",
-                "stoploss_on_exchange": False,
-                "stoploss_on_exchange_interval": 60,
-            },
-            "unfilledtimeout": {
-                "entry": 10,
-                "exit": 10,
-                "unit": "minutes",
-            },
+            "exit_pricing": {"price_side": "other", "use_order_book": True, "order_book_top": 1},
+            "order_types": {"entry": "market", "exit": "market", "emergency_exit": "market", "force_exit": "market", "stoploss": "market", "stoploss_on_exchange": False},
+            "unfilledtimeout": {"entry": 10, "exit": 10, "unit": "minutes"},
             "exchange": {
                 "name": "binance",
                 "key": "",
@@ -143,37 +128,67 @@ class FreqtradeWrapper:
         start_date: str,
         end_date: str,
     ):
-        """Fetch real candles via ccxt and write freqtrade feather files."""
-        provider = MarketDataProvider(exchange_name="binance")
-        ccxt_symbol = pair  # already BTC/USDT form
+        """Download OHLCV via Freqtrade CLI into the temp project's data dir.
 
-        provider.fetch_and_cache(
-            symbol=ccxt_symbol,
-            timeframe=timeframe,
-            start_date=start_date,
-            end_date=end_date,
-        )
-        candles = provider.load_cached(symbol=ccxt_symbol, timeframe=timeframe)
+        Reuses `freqtrade download-data` so files are in the exact format expected
+        by Freqtrade's backtesting engine (feather format, correct directory layout).
+        """
+        futures_dir = data_dir / "futures"
+        futures_dir.mkdir(parents=True, exist_ok=True)
+        dest_file = futures_dir / f"{_pair_to_key(pair)}-{timeframe}-futures.feather"
 
-        # Convert to DataFrame with freqtrade column names
-        df = pd.DataFrame(candles, columns=["date", "open", "high", "low", "close", "volume"])
-        df["date"] = pd.to_datetime(df["date"], unit="ms", utc=True)
-        df = df.set_index("date", drop=False)
-        df = df.sort_index()
+        # Reuse shared cache if available
+        cache_dir = Path("/tmp/athena_shared_data/data/binance/futures")
+        cached = cache_dir / dest_file.name
+        if cached.exists():
+            shutil.copy2(cached, dest_file)
+            return
 
-        # Write to freqtrade expected path: datadir/{timeframe}/{pair_key}.feather
-        tf_dir = data_dir / timeframe
-        tf_dir.mkdir(parents=True, exist_ok=True)
-        pair_key = _pair_to_key(pair)
-        feather_path = tf_dir / f"{pair_key}.feather"
-        df.to_feather(feather_path)
+        # Otherwise download via freqtrade CLI (more reliable than manual feather creation)
+        from athena.live.data_downloader import download_pair_data
+        tmp_deploy = Path(tempfile.mkdtemp(prefix="athena_tmp_dl_"))
+        config = {
+            "strategy": "AthenaStrategy",
+            "timeframe": timeframe,
+            "pairs": [pair],
+            "stake_currency": "USDT",
+            "stake_amount": "unlimited",
+            "dry_run": True,
+            "exchange": {
+                "name": "binance",
+                "key": "",
+                "secret": "",
+                "pair_whitelist": [pair],
+                "pair_blacklist": [],
+                "sandbox": False,
+            },
+            "pairlists": [{"method": "StaticPairList"}],
+            "trading_mode": "futures",
+            "margin_mode": "cross",
+            "dataformat_ohlcv": "feather",
+        }
+        (tmp_deploy / "config.json").write_text(json.dumps(config, indent=2))
+        days = max(7, (pd.to_datetime(end_date) - pd.to_datetime(start_date)).days + 1)
+        try:
+            download_pair_data(tmp_deploy, pair, timeframe, days=days)
+        except RuntimeError as exc:
+            logger.warning(f"download_pair_data failed: {exc}")
+        # Copy downloaded files into our target dir
+        src = tmp_deploy / "data" / "binance" / "futures"
+        if src.exists():
+            for f in src.glob("*.feather"):
+                shutil.copy2(f, futures_dir / f.name)
+                # Also populate shared cache
+                cache_dir.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(f, cache_dir / f.name)
+        shutil.rmtree(tmp_deploy, ignore_errors=True)
 
     # ── backtest ──────────────────────────────────────────────────
     def run_backtest(
         self,
         strategy_code: str,
-        start_date: str = "2024-01-01",
-        end_date: str = "2024-02-01",
+        start_date: str = "2026-05-02",
+        end_date: str = "2026-06-01",
         exchange: str = "binance",
         symbol: str = "BTC-USD",
         timeframe: str = "1h",
@@ -191,13 +206,11 @@ class FreqtradeWrapper:
             # Load config
             config_path = tmp / "config.json"
             cfg = Configuration.from_files([str(config_path)])
-            cfg["user_data_dir"] = str(tmp)
+            cfg["user_data_dir"] = Path(tmp)
 
             # Ensure timerange matches data dates
-            timerange = TimeRange.parse_timerange(
-                f"{start_date.replace('-', '')}-{end_date.replace('-', '')}"
-            )
-            cfg["timerange"] = timerange
+            timerange_str = f"{start_date.replace('-', '')}-{end_date.replace('-', '')}"
+            cfg["timerange"] = timerange_str
 
             # Run mode
             cfg["runmode"] = RunMode.BACKTEST
@@ -231,8 +244,10 @@ class FreqtradeWrapper:
                 "profit_factor": strategy_results.get("profit_factor", 0.0) or 0.0,
             }
         except Exception as exc:
+            import traceback
             return {
                 "error": str(exc),
+                "traceback": traceback.format_exc(),
                 **self._empty_metrics(),
             }
         finally:

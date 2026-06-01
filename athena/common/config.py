@@ -29,8 +29,8 @@ class Config:
     
     # Evaluator
     WALK_FORWARD_TRAIN_RATIO = 0.7
-    PROMOTE_THRESHOLD = 0.6
-    DEMOTE_THRESHOLD = 0.3
+    PROMOTE_THRESHOLD = 0.35
+    DEMOTE_THRESHOLD = 0.15
     RETIRE_AFTER_DEMOTIONS = 3
     
     # Scoring weights

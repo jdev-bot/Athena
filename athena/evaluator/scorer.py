@@ -33,7 +33,7 @@ class Scorer:
     
     def score(self, metrics: PerformanceMetrics) -> ScoreResult:
         """Calculate composite score."""
-        if metrics.total_trades < 5:
+        if metrics.total_trades < 2:
             # Not enough trades for reliable scoring
             return ScoreResult(
                 raw_score=0.0,

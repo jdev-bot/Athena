@@ -187,7 +187,7 @@ def test_ga_evolve():
 # ── Evaluator: Scorer ───────────────────────────────────────────────
 def test_scorer_low_trades():
     s = Scorer()
-    metrics = PerformanceMetrics(total_trades=2, sharpe=1.5)
+    metrics = PerformanceMetrics(total_trades=1, sharpe=1.5)
     score = s.score(metrics)
     assert score.verdict == "demote"
     assert score.raw_score == 0.0

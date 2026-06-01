@@ -18,14 +18,14 @@ class {class_name}(IStrategy):
     INTERFACE_VERSION = 3
 
     timeframe = '{timeframe}'
-    stoploss = -0.05
+    stoploss = -0.10
     trailing_stop = True
     trailing_stop_positive = 0.02
     trailing_stop_positive_offset = 0.04
 
-    can_short = True
+    can_short = False
+    use_exit_signal = True
 
-    # Number of candles for indicator warm-up
     startup_candle_count = {slow_period}
 
     # ── hyperoptable parameters ─────────────────────────────────────
@@ -44,25 +44,6 @@ class {class_name}(IStrategy):
     risk_capital_pct = {risk_capital_pct}
     reserve_capital_pct = {reserve_capital_pct}
 
-    def custom_stake_amount(
-        self, pair, current_time, current_rate, proposed_stake, min_stake, max_stake, **kwargs
-    ):
-        balance = self.wallets.get_total(self.stake_currency)
-        reserve = balance * self.reserve_capital_pct
-        risk_budget = balance * self.risk_capital_pct
-        # Sum stakes already locked in open trades
-        deployed = sum(
-            trade.stake_amount for trade in self.wallets.get_all_stake_amounts().values()
-            if trade
-        )
-        available_for_new = risk_budget - deployed
-        if available_for_new < self.min_stake_usd:
-            return 0.0
-        stake = balance * self.position_size_pct
-        stake = max(stake, self.min_stake_usd)
-        stake = min(stake, self.max_stake_usd, available_for_new)
-        return max(min(stake, max_stake), min_stake)
-
     def populate_indicators(self, dataframe: pd.DataFrame, metadata: dict) -> pd.DataFrame:
         dataframe['fast'] = ta.ema(dataframe['close'], length=self.fast_period)
         dataframe['slow'] = ta.ema(dataframe['close'], length=self.slow_period)
@@ -72,25 +53,12 @@ class {class_name}(IStrategy):
 
     def populate_entry_trend(self, dataframe: pd.DataFrame, metadata: dict) -> pd.DataFrame:
         dataframe.loc[
-            (
-                (dataframe['fast'] > dataframe['slow']) &
-                (dataframe['trend_strength'] > self.trend_threshold) &
-                (dataframe['rsi'] < self.rsi_overbought)
-            ),
+            (dataframe['fast'] > dataframe['slow']),
             'enter_long'] = 1
-
-        dataframe.loc[
-            (
-                (dataframe['fast'] < dataframe['slow']) &
-                (dataframe['trend_strength'] > self.trend_threshold) &
-                (dataframe['rsi'] > self.rsi_oversold)
-            ),
-            'enter_short'] = 1
         return dataframe
 
     def populate_exit_trend(self, dataframe: pd.DataFrame, metadata: dict) -> pd.DataFrame:
         dataframe.loc[dataframe['fast'] < dataframe['slow'], 'exit_long'] = 1
-        dataframe.loc[dataframe['fast'] > dataframe['slow'], 'exit_short'] = 1
         return dataframe
 """
 
@@ -106,7 +74,8 @@ class {class_name}(IStrategy):
     timeframe = '{timeframe}'
     stoploss = -0.10
 
-    can_short = True
+    can_short = False
+    use_exit_signal = True
 
     startup_candle_count = {mean_period}
 
@@ -126,24 +95,6 @@ class {class_name}(IStrategy):
     risk_capital_pct = {risk_capital_pct}
     reserve_capital_pct = {reserve_capital_pct}
 
-    def custom_stake_amount(
-        self, pair, current_time, current_rate, proposed_stake, min_stake, max_stake, **kwargs
-    ):
-        balance = self.wallets.get_total(self.stake_currency)
-        reserve = balance * self.reserve_capital_pct
-        risk_budget = balance * self.risk_capital_pct
-        deployed = sum(
-            trade.stake_amount for trade in self.wallets.get_all_stake_amounts().values()
-            if trade
-        )
-        available_for_new = risk_budget - deployed
-        if available_for_new < self.min_stake_usd:
-            return 0.0
-        stake = balance * self.position_size_pct
-        stake = max(stake, self.min_stake_usd)
-        stake = min(stake, self.max_stake_usd, available_for_new)
-        return max(min(stake, max_stake), min_stake)
-
     def populate_indicators(self, dataframe: pd.DataFrame, metadata: dict) -> pd.DataFrame:
         dataframe['sma'] = ta.sma(dataframe['close'], length=self.mean_period)
         dataframe['rsi'] = ta.rsi(dataframe['close'], length=self.rsi_period)
@@ -158,22 +109,10 @@ class {class_name}(IStrategy):
             (dataframe['rsi'] < self.rsi_oversold) &
             (dev > self.deviation_threshold),
             'enter_long'] = 1
-
-        dev = (dataframe['close'] - dataframe['sma']) / dataframe['sma']
-        dataframe.loc[
-            (dataframe['close'] > dataframe['sma']) &
-            (dataframe['rsi'] > self.rsi_overbought) &
-            (dev > self.deviation_threshold),
-            'enter_short'] = 1
         return dataframe
 
     def populate_exit_trend(self, dataframe: pd.DataFrame, metadata: dict) -> pd.DataFrame:
-        dataframe.loc[
-            dataframe['close'] > dataframe['sma'] + (dataframe['BBU_20'] - dataframe['sma']) * 0.5,
-            'exit_long'] = 1
-        dataframe.loc[
-            dataframe['close'] < dataframe['sma'] - (dataframe['sma'] - dataframe['BBL_20']) * 0.5,
-            'exit_short'] = 1
+        dataframe.loc[dataframe['close'] > dataframe['sma'], 'exit_long'] = 1
         return dataframe
 """
 
@@ -187,9 +126,10 @@ class {class_name}(IStrategy):
     INTERFACE_VERSION = 3
 
     timeframe = '{timeframe}'
-    stoploss = -0.05
+    stoploss = -0.10
 
-    can_short = True
+    can_short = False
+    use_exit_signal = True
 
     startup_candle_count = {lookback}
 
@@ -205,24 +145,6 @@ class {class_name}(IStrategy):
     risk_capital_pct = {risk_capital_pct}
     reserve_capital_pct = {reserve_capital_pct}
 
-    def custom_stake_amount(
-        self, pair, current_time, current_rate, proposed_stake, min_stake, max_stake, **kwargs
-    ):
-        balance = self.wallets.get_total(self.stake_currency)
-        reserve = balance * self.reserve_capital_pct
-        risk_budget = balance * self.risk_capital_pct
-        deployed = sum(
-            trade.stake_amount for trade in self.wallets.get_all_stake_amounts().values()
-            if trade
-        )
-        available_for_new = risk_budget - deployed
-        if available_for_new < self.min_stake_usd:
-            return 0.0
-        stake = balance * self.position_size_pct
-        stake = max(stake, self.min_stake_usd)
-        stake = min(stake, self.max_stake_usd, available_for_new)
-        return max(min(stake, max_stake), min_stake)
-
     def populate_indicators(self, dataframe: pd.DataFrame, metadata: dict) -> pd.DataFrame:
         dataframe['high_max'] = dataframe['high'].rolling(window=self.lookback).max()
         dataframe['low_min'] = dataframe['low'].rolling(window=self.lookback).min()
@@ -233,18 +155,12 @@ class {class_name}(IStrategy):
         dataframe.loc[
             (dataframe['close'] > dataframe['high_max'].shift(1)),
             'enter_long'] = 1
-        dataframe.loc[
-            (dataframe['close'] < dataframe['low_min'].shift(1)),
-            'enter_short'] = 1
         return dataframe
 
     def populate_exit_trend(self, dataframe: pd.DataFrame, metadata: dict) -> pd.DataFrame:
         dataframe.loc[
             dataframe['close'] < dataframe['high_max'].shift(1) - dataframe['atr'] * self.atr_multiplier,
             'exit_long'] = 1
-        dataframe.loc[
-            dataframe['close'] > dataframe['low_min'].shift(1) + dataframe['atr'] * self.atr_multiplier,
-            'exit_short'] = 1
         return dataframe
 """
 
@@ -258,9 +174,10 @@ class {class_name}(IStrategy):
     INTERFACE_VERSION = 3
 
     timeframe = '{timeframe}'
-    stoploss = -0.05
+    stoploss = -0.10
 
-    can_short = True
+    can_short = False
+    use_exit_signal = True
 
     startup_candle_count = {signal_period}
 
@@ -277,24 +194,6 @@ class {class_name}(IStrategy):
     risk_capital_pct = {risk_capital_pct}
     reserve_capital_pct = {reserve_capital_pct}
 
-    def custom_stake_amount(
-        self, pair, current_time, current_rate, proposed_stake, min_stake, max_stake, **kwargs
-    ):
-        balance = self.wallets.get_total(self.stake_currency)
-        reserve = balance * self.reserve_capital_pct
-        risk_budget = balance * self.risk_capital_pct
-        deployed = sum(
-            trade.stake_amount for trade in self.wallets.get_all_stake_amounts().values()
-            if trade
-        )
-        available_for_new = risk_budget - deployed
-        if available_for_new < self.min_stake_usd:
-            return 0.0
-        stake = balance * self.position_size_pct
-        stake = max(stake, self.min_stake_usd)
-        stake = min(stake, self.max_stake_usd, available_for_new)
-        return max(min(stake, max_stake), min_stake)
-
     def populate_indicators(self, dataframe: pd.DataFrame, metadata: dict) -> pd.DataFrame:
         dataframe['rsi'] = ta.rsi(dataframe['close'], length=self.rsi_period)
         macd = ta.macd(dataframe['close'], fast=12, slow=26, signal=self.signal_period)
@@ -307,19 +206,12 @@ class {class_name}(IStrategy):
             (dataframe['momentum'] > self.momentum_threshold) &
             (dataframe['rsi'] < 70),
             'enter_long'] = 1
-        dataframe.loc[
-            (dataframe['momentum'] < -self.momentum_threshold) &
-            (dataframe['rsi'] > 30),
-            'enter_short'] = 1
         return dataframe
 
     def populate_exit_trend(self, dataframe: pd.DataFrame, metadata: dict) -> pd.DataFrame:
         dataframe.loc[
             (dataframe['momentum'] < -self.momentum_threshold * 0.5),
             'exit_long'] = 1
-        dataframe.loc[
-            (dataframe['momentum'] > self.momentum_threshold * 0.5),
-            'exit_short'] = 1
         return dataframe
 """
 
@@ -335,7 +227,8 @@ class {class_name}(IStrategy):
     timeframe = '{timeframe}'
     stoploss = -0.10
 
-    can_short = True
+    can_short = False
+    use_exit_signal = True
 
     startup_candle_count = {atr_period}
 
@@ -356,24 +249,6 @@ class {class_name}(IStrategy):
     risk_capital_pct = {risk_capital_pct}
     reserve_capital_pct = {reserve_capital_pct}
 
-    def custom_stake_amount(
-        self, pair, current_time, current_rate, proposed_stake, min_stake, max_stake, **kwargs
-    ):
-        balance = self.wallets.get_total(self.stake_currency)
-        reserve = balance * self.reserve_capital_pct
-        risk_budget = balance * self.risk_capital_pct
-        deployed = sum(
-            trade.stake_amount for trade in self.wallets.get_all_stake_amounts().values()
-            if trade
-        )
-        available_for_new = risk_budget - deployed
-        if available_for_new < self.min_stake_usd:
-            return 0.0
-        stake = balance * self.position_size_pct
-        stake = max(stake, self.min_stake_usd)
-        stake = min(stake, self.max_stake_usd, available_for_new)
-        return max(min(stake, max_stake), min_stake)
-
     def populate_indicators(self, dataframe: pd.DataFrame, metadata: dict) -> pd.DataFrame:
         dataframe['atr'] = ta.atr(dataframe['high'], dataframe['low'], dataframe['close'], length=self.atr_period)
         dataframe['volatility'] = dataframe['atr'] / dataframe['close']
@@ -383,18 +258,12 @@ class {class_name}(IStrategy):
         dataframe.loc[
             dataframe['volatility'] > self.volatility_threshold,
             'enter_long'] = 1
-        dataframe.loc[
-            dataframe['volatility'] > self.volatility_threshold,
-            'enter_short'] = 1
         return dataframe
 
     def populate_exit_trend(self, dataframe: pd.DataFrame, metadata: dict) -> pd.DataFrame:
         dataframe.loc[
             dataframe['close'] > dataframe['close'].shift(1) * (1 + self.volatility * self.tp_multiplier),
             'exit_long'] = 1
-        dataframe.loc[
-            dataframe['close'] < dataframe['close'].shift(1) * (1 - self.volatility * self.tp_multiplier),
-            'exit_short'] = 1
         return dataframe
 """
 

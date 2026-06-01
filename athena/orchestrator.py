@@ -150,7 +150,7 @@ class AthenaOrchestrator:
             for record in records:
                 # Walk-forward
                 try:
-                    wf = wf_validator.run(record, "2024-01-01", "2025-01-01")
+                    wf = wf_validator.run(record, self.config.start_date, self.config.end_date)
                 except Exception as exc:
                     print(f"  [WF] {record.id} error: {exc}")
                     wf = WalkForwardResult(
@@ -162,7 +162,7 @@ class AthenaOrchestrator:
 
                 # Monte Carlo
                 try:
-                    mc = mc_tester.run(record, "2024-01-01", "2025-01-01")
+                    mc = mc_tester.run(record, self.config.start_date, self.config.end_date)
                 except Exception as exc:
                     print(f"  [MC] {record.id} error: {exc}")
                     mc = MonteCarloResult(

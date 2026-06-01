@@ -10,7 +10,8 @@ from datetime import datetime
 
 from athena.common.models import (
     StrategyTemplate, StrategyRecord, StrategyDNA, StrategyStatus,
-    PerformanceMetrics, ScoreResult, GenerationConfig
+    PerformanceMetrics, ScoreResult, GenerationConfig,
+    WalkForwardResult, MonteCarloResult,
 )
 from athena.common.config import config
 from athena.generator.templates import TEMPLATE_MAP
@@ -18,6 +19,7 @@ from athena.generator.dna import DNAEncoder
 from athena.generator.ga_engine import GAEngine, Individual
 from athena.generator.ml_predictor import MLPredictor
 from athena.evaluator.scorer import Scorer
+from athena.evaluator.robustness import WalkForwardValidator, MonteCarloStressTest
 from athena.services.models import init_db, get_session, StrategyModel
 
 
@@ -62,13 +64,13 @@ class AthenaOrchestrator:
             profit_factor=float(result.get("profit_factor", 0.0)),
         )
     
-    def run_generation(self, template: StrategyTemplate) -> List[StrategyRecord]:
-        """Run full generation + evaluation cycle."""
+    def run_generation(self, template: StrategyTemplate, run_gates: bool = True) -> List[StrategyRecord]:
+        """Run full generation + evaluation + robustness gates cycle."""
         print(f"\n{'='*60}")
         print(f"Starting generation for template: {template.value}")
         print(f"Population: {self.config.population_size}, Generations: {self.config.generations}")
         print(f"{'='*60}\n")
-        
+
         # Initialize GA engine
         ga = GAEngine(
             template=template,
@@ -78,13 +80,13 @@ class AthenaOrchestrator:
             crossover_rate=self.config.crossover_rate,
             elitism_count=self.config.elitism_count,
         )
-        
+
         # Initialize population
         ga.initialize_population()
-        
+
         # ML predictor
         ml = MLPredictor(template)
-        
+
         # Fitness function
         def fitness_fn(individual: Individual) -> float:
             # Create record
@@ -95,48 +97,113 @@ class AthenaOrchestrator:
                 dna=StrategyDNA(template=template, vector=individual.dna),
                 generation=individual.generation,
             )
-            
+
             # Evaluate
             metrics = self.evaluate_strategy(record)
             record.performance = metrics
-            
+
             # Score
             score = self.scorer.score(metrics)
             record.score = score
-            
+
             # Save to DB
             self._save_strategy(record)
-            
+
             return score.raw_score
-        
+
         # Evolve
         population = ga.evolve(fitness_fn)
-        
+
         # Train ML predictor on final population
         if self.config.ml_boost:
             ml.train(population)
             self.ml_predictor[template] = ml
-        
+
         # Convert to records
         records = ga.to_strategy_records()
-        
+
         # Update records with actual scores
         for record in records:
             record.performance = self.evaluate_strategy(record)
             record.score = self.scorer.score(record.performance)
             self._save_strategy(record)
-        
+
+        # ── Robustness gates (Phase B) ──────────────────────────────
+        if run_gates:
+            print(f"\n{'='*60}")
+            print("Running robustness gates...")
+            print(f"{'='*60}\n")
+
+            wf_validator = WalkForwardValidator()
+            mc_tester = MonteCarloStressTest()
+
+            for record in records:
+                # Walk-forward
+                try:
+                    wf = wf_validator.run(record, "2024-01-01", "2025-01-01")
+                except Exception as exc:
+                    print(f"  [WF] {record.id} error: {exc}")
+                    wf = WalkForwardResult(
+                        in_sample_metrics=PerformanceMetrics(),
+                        out_sample_metrics=PerformanceMetrics(),
+                        degradation_ratio=0.0,
+                        is_robust=False,
+                    )
+
+                # Monte Carlo
+                try:
+                    mc = mc_tester.run(record, "2024-01-01", "2025-01-01")
+                except Exception as exc:
+                    print(f"  [MC] {record.id} error: {exc}")
+                    mc = MonteCarloResult(
+                        original_sharpe=0.0,
+                        shuffled_sharpe_mean=0.0,
+                        shuffled_sharpe_std=0.0,
+                        p_value=1.0,
+                        is_significant=False,
+                    )
+
+                # Only pass if BOTH gates pass
+                passes_both = wf.is_robust and mc.is_significant
+                record.metadata = record.metadata or {}
+                record.metadata["walk_forward"] = wf.model_dump()
+                record.metadata["monte_carlo"] = mc.model_dump()
+                record.metadata["robustness_passed"] = passes_both
+
+                # Update DB with gate results
+                sess = get_session()
+                row = sess.query(StrategyModel).filter_by(id=record.id).first()
+                if row:
+                    meta = row.metadata_json or {}
+                    meta.update(record.metadata)
+                    row.metadata_json = meta
+                    # Only "promote" strategies that survived the gates
+                    if row.verdict == "promote" and passes_both:
+                        row.status = StrategyStatus.BACKTEST_DONE.value
+                    elif row.verdict == "promote" and not passes_both:
+                        row.status = StrategyStatus.BACKTEST_FAILED.value
+                    sess.commit()
+                sess.close()
+
+                print(f"  {record.id}: WF={wf.is_robust} MC={mc.is_significant} PASS={passes_both}")
+
         # Sort by score
         records.sort(key=lambda x: x.score.raw_score, reverse=True)
-        
+
         # Print summary
+        if run_gates:
+            passed = [r for r in records if r.metadata.get("robustness_passed", False)]
+        else:
+            passed = records
         print(f"\n{'='*60}")
         print(f"Generation complete!")
         print(f"Best score: {records[0].score.raw_score:.3f}")
         print(f"Best strategy: {records[0].id}")
         print(f"Verdict: {records[0].score.verdict}")
+        if run_gates:
+            print(f"Robustness gates passed: {len(passed)}/{len(records)}")
         print(f"{'='*60}\n")
-        
+
         return records
     
     def _save_strategy(self, record: StrategyRecord) -> None:

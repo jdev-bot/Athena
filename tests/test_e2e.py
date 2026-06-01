@@ -235,7 +235,7 @@ def test_orchestrator_roundtrip():
         generations=1,
     )
     orch = AthenaOrchestrator(cfg)
-    records = orch.run_generation(StrategyTemplate.TREND_FOLLOWING)
+    records = orch.run_generation(StrategyTemplate.TREND_FOLLOWING, run_gates=False)
     assert len(records) > 0
     # All records should have been saved to DB
     best = records[0]

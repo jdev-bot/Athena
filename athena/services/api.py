@@ -18,6 +18,7 @@ from athena.generator.templates import TEMPLATE_MAP, TEMPLATE_SPECS
 from athena.common.config import config
 from athena.core.freqtrade_wrapper import FreqtradeWrapper
 from athena.live.runner import LiveRunner
+from athena.live.feedback import AdaptiveLoop
 
 
 # ── startup / shutdown ────────────────────────────────────────────
@@ -109,6 +110,83 @@ class LiveStatusResponse(BaseModel):
 
 # ── live runner registry (in-memory, holds async tasks) ──────────
 _runners: dict[str, LiveRunner] = {}
+
+# ── adaptive loop singleton (shared across sessions) ───────────────
+_adaptive = AdaptiveLoop()
+
+
+@app.post("/live/adaptive_watch")
+async def adaptive_watch(session_id: str):
+    """Start the continuous feedback collector + adaptive loop for a session."""
+    runner = _runners.get(session_id)
+    if not runner:
+        raise HTTPException(status_code=404, detail="Session not found")
+    # Also start drift monitoring + adaptive re-optimization
+    await _adaptive.watch_session(session_id)
+    return {"session_id": session_id, "adaptive": True}
+
+
+@app.get("/live/snapshots")
+async def live_snapshots(session_id: str, limit: int = 50):
+    """Retrieve recent snapshots with drift metrics for a session."""
+    rows = _adaptive.collector.get_recent_snapshots(session_id, limit=limit)
+    return [
+        {
+            "timestamp": r.timestamp.isoformat(),
+            "equity": r.equity,
+            "total_trades": r.total_trades,
+            "profit_closed_pct": r.profit_closed_pct,
+            "sharpe_estimate": r.sharpe_estimate,
+            "max_drawdown": r.max_drawdown,
+            "win_rate": r.win_rate,
+            "sharpe_ratio": r.sharpe_ratio,
+            "drawdown_ratio": r.drawdown_ratio,
+            "is_degraded": r.is_degraded,
+        }
+        for r in rows
+    ]
+
+
+@app.get("/live/analyze")
+async def live_analyze(session_id: str):
+    """High-level drift report for a session vs its backtest baseline."""
+    snapshots = _adaptive.collector.get_recent_snapshots(session_id, limit=10)
+    if not snapshots:
+        raise HTTPException(status_code=404, detail="No snapshots yet")
+
+    latest = snapshots[0]
+    trend = "stable"
+    if all(s.is_degraded in ("mild", "severe") for s in snapshots[:5]):
+        trend = "degrading"
+    elif latest.is_degraded == "":
+        trend = "stable"
+
+    return {
+        "session_id": session_id,
+        "strategy_id": latest.strategy_id,
+        "latest": {
+            "timestamp": latest.timestamp.isoformat(),
+            "equity": latest.equity,
+            "total_trades": latest.total_trades,
+            "profit_closed_pct": latest.profit_closed_pct,
+            "sharpe_estimate": latest.sharpe_estimate,
+            "max_drawdown": latest.max_drawdown,
+            "win_rate": latest.win_rate,
+        },
+        "baseline": {
+            "backtest_sharpe": latest.backtest_sharpe,
+            "backtest_max_drawdown": latest.backtest_max_drawdown,
+        },
+        "ratios": {
+            "sharpe_ratio": latest.sharpe_ratio,
+            "drawdown_ratio": latest.drawdown_ratio,
+        },
+        "drift": {
+            "is_degraded": latest.is_degraded,
+            "trend": trend,
+        },
+        "snapshots_count": len(snapshots),
+    }
 
 
 # ── helpers ────────────────────────────────────────────────────────
@@ -336,6 +414,11 @@ async def live_start(req: LiveStartRequest):
     )
     await runner.start()
     _runners[runner.session_id] = runner
+    # Auto-start adaptive drift monitoring on every session
+    try:
+        await _adaptive.watch_session(runner.session_id)
+    except Exception:
+        pass  # best-effort; don't block start on feedback issues
     return LiveStartResponse(
         session_id=runner.session_id,
         strategy_id=req.strategy_id,

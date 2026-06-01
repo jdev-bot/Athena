@@ -1,7 +1,7 @@
 """Database models for Athena."""
 from datetime import datetime
 from typing import Optional
-from sqlalchemy import create_engine, Column, String, Float, Integer, DateTime, JSON
+from sqlalchemy import create_engine, Column, String, Float, Integer, DateTime, JSON, Index
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.orm import declarative_base
 from athena.common.config import config
@@ -49,22 +49,50 @@ class LiveSessionModel(Base):
     strategy_id = Column(String, nullable=False)
     started_at = Column(DateTime, default=datetime.utcnow)
     stopped_at = Column(DateTime, nullable=True)
-    status = Column(String, default="running")  # running, stopped_by_user, stopped_drawdown, stopped_error
-    mode = Column(String, default="paper")  # paper, live
+    status = Column(String, default="running")
+    mode = Column(String, default="paper")
 
-    # Runtime stats
-    equity = Column(Float, default=10_000.0)
+    equity = Column(Float, default=50.0)
     open_positions = Column(Integer, default=0)
     unrealized_pnl = Column(Float, default=0.0)
     total_trades_taken = Column(Integer, default=0)
     max_drawdown_seen = Column(Float, default=0.0)
-
-    # Signals log (last N signals as JSON list)
     last_signals = Column(JSON, default=list)
-
-    # Metadata
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow)
+
+
+class LiveSnapshot(Base):
+    """Time-series snapshots from Freqtrade bot status for drift detection."""
+    __tablename__ = "live_snapshots"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    session_id = Column(String, nullable=False)
+    strategy_id = Column(String, nullable=False)
+    timestamp = Column(DateTime, default=datetime.utcnow)
+
+    # Raw from bot
+    equity = Column(Float, default=0.0)
+    total_trades = Column(Integer, default=0)
+    profit_closed_pct = Column(Float, default=0.0)
+    profit_all_pct = Column(Float, default=0.0)
+
+    # Computed rolling metrics
+    sharpe_estimate = Column(Float, default=0.0)        # rolling
+    max_drawdown = Column(Float, default=0.0)          # peak-to-trough
+    win_rate = Column(Float, default=0.0)                # closed wins / total closed
+
+    # Drift detection (against backtest baseline from strategies table)
+    backtest_sharpe = Column(Float, default=0.0)
+    backtest_max_drawdown = Column(Float, default=0.0)
+    sharpe_ratio = Column(Float, default=0.0)            # live / backtest
+    drawdown_ratio = Column(Float, default=0.0)          # live / backtest
+    is_degraded = Column(String, default="")             # "" | "mild" | "severe"
+
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    # Index for fast queries on latest snapshots
+    __table_args__ = (Index("ix_snapshots_session_time", "session_id", "timestamp"),)
 
 
 # Setup

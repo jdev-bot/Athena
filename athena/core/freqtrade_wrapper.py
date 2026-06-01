@@ -187,7 +187,7 @@ class FreqtradeWrapper:
     def run_backtest(
         self,
         strategy_code: str,
-        start_date: str = "2026-05-02",
+        start_date: str = "2026-02-01",
         end_date: str = "2026-06-01",
         exchange: str = "binance",
         symbol: str = "BTC-USD",

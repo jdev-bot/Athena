@@ -106,7 +106,7 @@ class GenerationConfig(BaseModel):
     """Configuration for a generator run."""
     symbols: List[str] = Field(default=["BTC-USD"])
     timeframe: str = "1h"
-    start_date: str = "2026-05-02"
+    start_date: str = "2026-02-01"
     end_date: str = "2026-06-01"
     exchange: str = "Sandbox"
     population_size: int = 30

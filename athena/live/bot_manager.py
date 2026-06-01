@@ -14,7 +14,7 @@ import signal
 import subprocess
 import time
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, Optional
 
@@ -84,6 +84,15 @@ class BotManager:
             env=env,
         )
 
+        # Health check: verify process started
+        await asyncio.sleep(0.5)
+        if proc.poll() is not None:
+            stdout, stderr = proc.communicate()
+            raise RuntimeError(
+                f"Freqtrade process exited immediately (code {proc.returncode}). "
+                f"stderr: {stderr.decode()[:500]}"
+            )
+
         # Persist session
         sess = get_session()
         sess.add(LiveSessionModel(
@@ -103,7 +112,7 @@ class BotManager:
             "api_port": api_port,
             "api_user": api_creds["username"],
             "api_pass": api_creds["password"],
-            "started_at": datetime.utcnow(),
+            "started_at": datetime.now(timezone.utc),
             "risk": risk or {},
             "strategy_id": strategy_id,
         }
@@ -124,7 +133,7 @@ class BotManager:
             row = sess.query(LiveSessionModel).filter_by(id=session_id).first()
             if row:
                 row.status = reason
-                row.stopped_at = datetime.utcnow()
+                row.stopped_at = datetime.now(timezone.utc)
                 sess.commit()
             sess.close()
             return
@@ -146,7 +155,7 @@ class BotManager:
         row = sess.query(LiveSessionModel).filter_by(id=session_id).first()
         if row:
             row.status = reason
-            row.stopped_at = datetime.utcnow()
+            row.stopped_at = datetime.now(timezone.utc)
             sess.commit()
         sess.close()
 

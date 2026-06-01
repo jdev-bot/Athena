@@ -9,7 +9,7 @@ Design:
 import time
 import threading
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional, List, Callable
 
 from athena.common.models import StrategyTemplate, GenerationConfig
@@ -95,7 +95,7 @@ class AutonomousScheduler:
 
     def _run_cycle(self) -> None:
         """One evolution cycle across configured templates."""
-        self.last_cycle_at = datetime.utcnow()
+        self.last_cycle_at = datetime.now(timezone.utc)
         promoted_this_cycle = 0
         evaluated_this_cycle = 0
 

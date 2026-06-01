@@ -15,7 +15,7 @@ import traceback
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import List, Optional, Dict, Any, Callable
-from datetime import datetime
+from datetime import datetime, timezone
 
 from athena.common.models import (
     StrategyTemplate, StrategyDNA, StrategyRecord, StrategyStatus,
@@ -307,7 +307,7 @@ class AthenaEngine:
                 meta = existing.metadata_json or {}
                 meta.update(record.metadata)
                 existing.metadata_json = meta
-            existing.updated_at = datetime.utcnow()
+            existing.updated_at = datetime.now(timezone.utc)
         else:
             strat = StrategyModel(
                 id=record.id,

@@ -2,7 +2,7 @@
 import os
 import uuid
 from contextlib import asynccontextmanager
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import List, Optional
 from pathlib import Path
 
@@ -261,7 +261,7 @@ async def run_backtest(req: BacktestRequest):
         row.status = StrategyStatus.BACKTEST_FAILED.value
         metrics = {"error": str(exc)}
 
-    row.updated_at = datetime.utcnow()
+    row.updated_at = datetime.now(timezone.utc)
     session.commit()
 
     return BacktestResponse(

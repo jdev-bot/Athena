@@ -4,7 +4,7 @@ import json
 import logging
 import math
 import statistics
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Tuple
 import numpy as np
 
@@ -118,7 +118,7 @@ class FeedbackCollector:
         total_trades = int(stats.get("total_trades", 0))
         p_closed = float(stats.get("profit_closed_pct", 0.0))
         p_all = float(stats.get("profit_all_pct", 0.0))
-        ts = datetime.utcnow()
+        ts = datetime.now(timezone.utc)
 
         # Rolling metrics
         buf = self.buffers.get(session_id)
@@ -336,7 +336,7 @@ class AdaptiveLoop:
 
         # 4. Save new strategy
         new_record = StrategyRecord(
-            id=f"strat_{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}",
+            id=f"strat_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}",
             name=f"adaptive_{template.value}",
             template=template,
             dna=StrategyDNA(template=template, vector=best.dna),

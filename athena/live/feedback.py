@@ -1,6 +1,7 @@
 """Continuous feedback loop — live/paper PnL drives GA re-evolution & drift detection."""
 import asyncio
 import json
+import logging
 import math
 import statistics
 from datetime import datetime
@@ -14,8 +15,11 @@ from athena.live.bot_manager import BotManager
 from athena.common.models import (
     StrategyRecord, StrategyDNA, PerformanceMetrics, StrategyTemplate, StrategyStatus,
 )
-from athena.orchestrator import AthenaOrchestrator
+from athena.core.engine import AthenaEngine
 from athena.common.config import config
+
+
+logger = logging.getLogger(__name__)
 
 
 class _StreamBuffer:
@@ -299,7 +303,6 @@ class AdaptiveLoop:
         # 3. Mini-GA: seed from current champion + elevated mutation
         from athena.generator.ga_engine import GAEngine
         from athena.generator.dna import DNAEncoder
-        from athena.evaluator.scorer import Scorer
 
         encoder = DNAEncoder()
         ga = GAEngine(
@@ -315,8 +318,7 @@ class AdaptiveLoop:
         ga.population[0].dna = dict(dna_vector)
         ga.population[0].generation = 0
 
-        orchestrator = AthenaOrchestrator(self._mini_gen_config())
-        scorer = Scorer()
+        engine = AthenaEngine(self._mini_gen_config())
 
         def fitness_fn(ind):
             record = StrategyRecord(
@@ -326,9 +328,8 @@ class AdaptiveLoop:
                 dna=StrategyDNA(template=template, vector=ind.dna),
                 generation=ind.generation,
             )
-            metrics = orchestrator.evaluate_strategy(record)
-            score = scorer.score(metrics)
-            return round(score.raw_score, 6)
+            record = engine.evaluate_record(record)
+            return round(record.score.raw_score, 6)
 
         population = ga.evolve(fitness_fn)
         best = population[0]
@@ -341,7 +342,7 @@ class AdaptiveLoop:
             dna=StrategyDNA(template=template, vector=best.dna),
             status=StrategyStatus.GENERATED,
         )
-        orchestrator._save_strategy(new_record)
+        engine._persist(new_record)
 
         # 5. If aggressive, auto-launch the new winner in paper mode
         if aggressive:

@@ -15,6 +15,7 @@ class StrategyStatus(str, Enum):
     OPTIMIZE = "optimize"
     PAPER = "paper"
     LIVE = "live"
+    PROMOTED = "promoted"
     RETIRED = "retired"
     FAILED = "failed"
 

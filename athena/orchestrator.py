@@ -1,363 +1,93 @@
-"""Main orchestrator for Athena generator + evaluator."""
-import os
-import sys
-import json
-import asyncio
+"""CLI entry-point for Athena — thin wrapper around AthenaEngine."""
 import argparse
+import json
+import logging
 from pathlib import Path
-from typing import List, Dict, Any
-from datetime import datetime
 
-from athena.common.models import (
-    StrategyTemplate, StrategyRecord, StrategyDNA, StrategyStatus,
-    PerformanceMetrics, ScoreResult, GenerationConfig,
-    WalkForwardResult, MonteCarloResult,
-)
+from athena.common.models import StrategyTemplate, GenerationConfig
 from athena.common.config import config
-from athena.generator.templates import TEMPLATE_MAP
-from athena.generator.dna import DNAEncoder
-from athena.generator.ga_engine import GAEngine, Individual
-from athena.generator.ml_predictor import MLPredictor
-from athena.evaluator.scorer import Scorer
-from athena.evaluator.robustness import WalkForwardValidator, MonteCarloStressTest
-from athena.services.models import init_db, get_session, StrategyModel
+from athena.core.engine import AthenaEngine
 
-
-class AthenaOrchestrator:
-    """Orchestrates strategy generation, evaluation, and lifecycle."""
-    
-    def __init__(self, gen_config: GenerationConfig):
-        self.config = gen_config
-        self.encoder = DNAEncoder()
-        self.scorer = Scorer()
-        self.ml_predictor: Dict[StrategyTemplate, MLPredictor] = {}
-        init_db()
-        
-    def generate_strategy_code(self, record: StrategyRecord) -> str:
-        """Generate Freqtrade-compatible strategy Python code."""
-        template = TEMPLATE_MAP.get(record.dna.template)
-        if not template:
-            raise ValueError(f"Unknown template: {record.dna.template}")
-
-        params = self.encoder.to_strategy_params(record.dna.vector, record.dna.template)
-        params['class_name'] = 'AthenaStrategy'
-        params['template_name'] = record.dna.template.value
-        params['timeframe'] = getattr(record, 'timeframe', '1h')
-
-        return template.format(**params)
-    
-    def evaluate_strategy(self, record: StrategyRecord) -> PerformanceMetrics:
-        """Run backtest and return metrics."""
-        from athena.core.freqtrade_wrapper import FreqtradeWrapper
-        wrapper = FreqtradeWrapper()
-        code = self.generate_strategy_code(record)
-        result = wrapper.run_backtest(code, exchange="binance", symbol="BTC-USD")
-        return PerformanceMetrics(
-            total_return=float(result.get("total_return", 0.0)),
-            sharpe=float(result.get("sharpe", 0.0)),
-            sortino=float(result.get("sortino", 0.0)),
-            calmar=float(result.get("calmar", 0.0)),
-            win_rate=float(result.get("win_rate", 0.0)),
-            max_drawdown=float(result.get("max_drawdown", 0.0)),
-            total_trades=int(result.get("total_trades", 0)),
-            avg_trade=float(result.get("avg_trade", 0.0)),
-            profit_factor=float(result.get("profit_factor", 0.0)),
-        )
-    
-    def run_generation(self, template: StrategyTemplate, run_gates: bool = True) -> List[StrategyRecord]:
-        """Run full generation + evaluation + robustness gates cycle."""
-        print(f"\n{'='*60}")
-        print(f"Starting generation for template: {template.value}")
-        print(f"Population: {self.config.population_size}, Generations: {self.config.generations}")
-        print(f"{'='*60}\n")
-
-        # Initialize GA engine
-        ga = GAEngine(
-            template=template,
-            population_size=self.config.population_size,
-            generations=self.config.generations,
-            mutation_rate=self.config.mutation_rate,
-            crossover_rate=self.config.crossover_rate,
-            elitism_count=self.config.elitism_count,
-        )
-
-        # Initialize population
-        ga.initialize_population()
-
-        # ML predictor
-        ml = MLPredictor(template)
-
-        # Fitness function
-        def fitness_fn(individual: Individual) -> float:
-            # Merge metadata into DNA vector
-            dna_vector = dict(individual.dna)
-            dna_vector.setdefault("timeframe", self.config.timeframe)
-            dna_vector.setdefault("symbol", self.config.symbols[0] if self.config.symbols else "BTC-USD")
-
-            record = StrategyRecord(
-                id=individual.id,
-                name=f"{template.value}_{individual.id[-6:]}",
-                template=template,
-                dna=StrategyDNA(template=template, vector=dna_vector),
-                generation=individual.generation,
-            )
-
-            # Evaluate
-            metrics = self.evaluate_strategy(record)
-            record.performance = metrics
-
-            # Score
-            score = self.scorer.score(metrics)
-            record.score = score
-
-            # Save to DB
-            self._save_strategy(record)
-
-            return score.raw_score
-
-        # Evolve
-        population = ga.evolve(fitness_fn)
-
-        # Train ML predictor on final population
-        if self.config.ml_boost:
-            ml.train(population)
-            self.ml_predictor[template] = ml
-
-        # Convert to records
-        records = ga.to_strategy_records()
-
-        # Inject timeframe / symbol from generation config into DNA
-        for record in records:
-            if isinstance(record.dna.vector, dict):
-                record.dna.vector.setdefault("timeframe", self.config.timeframe)
-                record.dna.vector.setdefault("symbol", self.config.symbols[0] if self.config.symbols else "BTC-USD")
-
-        # Update records with actual scores
-        for record in records:
-            record.performance = self.evaluate_strategy(record)
-            record.score = self.scorer.score(record.performance)
-            self._save_strategy(record)
-
-        # ── Robustness gates (Phase B) ──────────────────────────────
-        if run_gates:
-            print(f"\n{'='*60}")
-            print("Running robustness gates...")
-            print(f"{'='*60}\n")
-
-            wf_validator = WalkForwardValidator()
-            mc_tester = MonteCarloStressTest()
-
-            for record in records:
-                # Walk-forward
-                try:
-                    wf = wf_validator.run(record, self.config.start_date, self.config.end_date)
-                except Exception as exc:
-                    print(f"  [WF] {record.id} error: {exc}")
-                    wf = WalkForwardResult(
-                        in_sample_metrics=PerformanceMetrics(),
-                        out_sample_metrics=PerformanceMetrics(),
-                        degradation_ratio=0.0,
-                        is_robust=False,
-                    )
-
-                # Monte Carlo
-                try:
-                    mc = mc_tester.run(record, self.config.start_date, self.config.end_date)
-                except Exception as exc:
-                    print(f"  [MC] {record.id} error: {exc}")
-                    mc = MonteCarloResult(
-                        original_sharpe=0.0,
-                        shuffled_sharpe_mean=0.0,
-                        shuffled_sharpe_std=0.0,
-                        p_value=1.0,
-                        is_significant=False,
-                    )
-
-                # Only pass if BOTH gates pass
-                passes_both = wf.is_robust and mc.is_significant
-                record.metadata = record.metadata or {}
-                record.metadata["walk_forward"] = wf.model_dump()
-                record.metadata["monte_carlo"] = mc.model_dump()
-                record.metadata["robustness_passed"] = passes_both
-
-                # Update DB with gate results
-                sess = get_session()
-                row = sess.query(StrategyModel).filter_by(id=record.id).first()
-                if row:
-                    meta = row.metadata_json or {}
-                    meta.update(record.metadata)
-                    row.metadata_json = meta
-                    # Only "promote" strategies that survived the gates
-                    if row.verdict == "promote" and passes_both:
-                        row.status = StrategyStatus.BACKTEST_DONE.value
-                    elif row.verdict == "promote" and not passes_both:
-                        row.status = StrategyStatus.BACKTEST_FAILED.value
-                    sess.commit()
-                sess.close()
-
-                print(f"  {record.id}: WF={wf.is_robust} MC={mc.is_significant} PASS={passes_both}")
-
-        # Sort by score
-        records.sort(key=lambda x: x.score.raw_score, reverse=True)
-
-        # Print summary
-        if run_gates:
-            passed = [r for r in records if r.metadata.get("robustness_passed", False)]
-        else:
-            passed = records
-        print(f"\n{'='*60}")
-        print(f"Generation complete!")
-        print(f"Best score: {records[0].score.raw_score:.3f}")
-        print(f"Best strategy: {records[0].id}")
-        print(f"Verdict: {records[0].score.verdict}")
-        if run_gates:
-            print(f"Robustness gates passed: {len(passed)}/{len(records)}")
-        print(f"{'='*60}\n")
-
-        return records
-    
-    def _save_strategy(self, record: StrategyRecord) -> None:
-        """Save strategy to database."""
-        session = get_session()
-        
-        existing = session.query(StrategyModel).filter(
-            StrategyModel.id == record.id
-        ).first()
-        
-        if existing:
-            # Update
-            existing.status = record.status.value
-            existing.generation = record.generation
-            existing.total_return = record.performance.total_return
-            existing.sharpe = record.performance.sharpe
-            existing.sortino = record.performance.sortino
-            existing.calmar = record.performance.calmar
-            existing.win_rate = record.performance.win_rate
-            existing.max_drawdown = record.performance.max_drawdown
-            existing.total_trades = record.performance.total_trades
-            existing.avg_trade = record.performance.avg_trade
-            existing.profit_factor = record.performance.profit_factor
-            existing.raw_score = record.score.raw_score
-            existing.verdict = record.score.verdict
-            existing.updated_at = datetime.utcnow()
-        else:
-            # Create
-            strat = StrategyModel(
-                id=record.id,
-                name=record.name,
-                template=record.dna.template.value,
-                dna=record.dna.vector,
-                objective=record.objective,
-                status=record.status.value,
-                generation=record.generation,
-                parent_id=record.parent_id,
-                total_return=record.performance.total_return,
-                sharpe=record.performance.sharpe,
-                sortino=record.performance.sortino,
-                calmar=record.performance.calmar,
-                win_rate=record.performance.win_rate,
-                max_drawdown=record.performance.max_drawdown,
-                total_trades=record.performance.total_trades,
-                avg_trade=record.performance.avg_trade,
-                profit_factor=record.performance.profit_factor,
-                raw_score=record.score.raw_score,
-                verdict=record.score.verdict,
-            )
-            session.add(strat)
-        
-        session.commit()
-    
-    def get_best_strategies(self, template: StrategyTemplate = None,
-                           limit: int = 10) -> List[StrategyRecord]:
-        """Get best strategies from database."""
-        session = get_session()
-        query = session.query(StrategyModel).order_by(StrategyModel.raw_score.desc())
-        if template:
-            query = query.filter(StrategyModel.template == template.value)
-        rows = query.limit(limit).all()
-        
-        records = []
-        for row in rows:
-            records.append(self._row_to_record(row))
-        return records
-    
-    def _row_to_record(self, row: StrategyModel) -> StrategyRecord:
-        """Convert DB row to StrategyRecord."""
-        return StrategyRecord(
-            id=row.id,
-            name=row.name,
-            template=StrategyTemplate(row.template),
-            dna=StrategyDNA(template=StrategyTemplate(row.template), vector=row.dna),
-            objective=row.objective,
-            status=StrategyStatus(row.status),
-            generation=row.generation,
-            parent_id=row.parent_id,
-            performance=PerformanceMetrics(
-                total_return=row.total_return,
-                sharpe=row.sharpe,
-                sortino=row.sortino,
-                calmar=row.calmar,
-                win_rate=row.win_rate,
-                max_drawdown=row.max_drawdown,
-                total_trades=row.total_trades,
-                avg_trade=row.avg_trade,
-                profit_factor=row.profit_factor,
-            ),
-            score=ScoreResult(raw_score=row.raw_score, verdict=row.verdict),
-            created_at=row.created_at,
-            updated_at=row.updated_at,
-        )
+logging.basicConfig(level=getattr(logging, config.LOG_LEVEL), format="%(asctime)s | %(levelname)s | %(message)s")
+logger = logging.getLogger(__name__)
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Athena Strategy Generator")
-    parser.add_argument("--mode", choices=["evolve", "evaluate", "list", "export"],
+    parser = argparse.ArgumentParser(description="Athena — AI Strategy Generator")
+    parser.add_argument("--mode", choices=["evolve", "search", "evaluate", "promote", "deploy", "list", "export"],
                         default="evolve")
-    parser.add_argument("--template", choices=[t.value for t in StrategyTemplate],
-                        default="trend_following")
+    parser.add_argument("--template", choices=[t.value for t in StrategyTemplate], default="trend_following")
     parser.add_argument("--symbols", default="BTC-USD")
     parser.add_argument("--timeframe", default="1h")
+    parser.add_argument("--start-date", default="2026-05-02")
+    parser.add_argument("--end-date", default="2026-06-01")
     parser.add_argument("--population", type=int, default=30)
     parser.add_argument("--generations", type=int, default=20)
-    parser.add_argument("--output", default=None)
-    
+    parser.add_argument("--strategy-id")
+    parser.add_argument("--output")
+    parser.add_argument("--gates", type=lambda x: x.lower() in ("true", "1", "yes"), default=True,
+                        help="Run robustness gates after evolution")
     args = parser.parse_args()
-    
+
     gen_config = GenerationConfig(
         symbols=args.symbols.split(","),
         timeframe=args.timeframe,
+        start_date=args.start_date,
+        end_date=args.end_date,
         population_size=args.population,
         generations=args.generations,
     )
-    
-    orch = AthenaOrchestrator(gen_config)
-    
+    engine = AthenaEngine(gen_config)
+
     if args.mode == "evolve":
         template = StrategyTemplate(args.template)
-        records = orch.run_generation(template)
-        
+        records = engine.evolve(template, run_gates=args.gates)
+        for r in records[:5]:
+            logger.info(f"  {r.id}: score={r.score.raw_score:.3f} verdict={r.score.verdict} gates={r.metadata.get('robustness_passed', False)}")
         if args.output:
-            with open(args.output, 'w') as f:
-                data = [r.model_dump() for r in records]
-                json.dump(data, f, indent=2, default=str)
-            print(f"Results saved to {args.output}")
-    
-    elif args.mode == "list":
-        records = orch.get_best_strategies(limit=20)
-        for r in records:
-            print(f"{r.id}: {r.name} | Score: {r.score.raw_score:.3f} | Status: {r.status.value}")
-    
+            Path(args.output).write_text(json.dumps([r.model_dump() for r in records], indent=2, default=str))
+            logger.info(f"Saved to {args.output}")
+
+    elif args.mode == "search":
+        results = engine.run_search()
+        for tpl, recs in results.items():
+            if recs:
+                logger.info(f"{tpl}: best={recs[0].id} score={recs[0].score.raw_score:.3f}")
+        if args.output:
+            out = {k: [r.model_dump() for r in v] for k, v in results.items()}
+            Path(args.output).write_text(json.dumps(out, indent=2, default=str))
+
     elif args.mode == "evaluate":
-        print("Evaluate mode: specify --strategy-id")
-    
+        if not args.strategy_id:
+            logger.error("--strategy-id required")
+            return
+        record = engine.evaluate(args.strategy_id)
+        logger.info(f"Score={record.score.raw_score:.3f} | {record.score.verdict} | trades={record.performance.total_trades}")
+
+    elif args.mode == "promote":
+        if not args.strategy_id:
+            logger.error("--strategy-id required")
+            return
+        record = engine.promote(args.strategy_id)
+        logger.info(f"Status={record.status.value} | gates={record.metadata.get('robustness_passed')} | verdict={record.score.verdict}")
+
+    elif args.mode == "deploy":
+        if not args.strategy_id:
+            logger.error("--strategy-id required")
+            return
+        path = engine.deploy(args.strategy_id)
+        logger.info(f"Deployed to {path}")
+
+    elif args.mode == "list":
+        records = engine.run_search([StrategyTemplate(args.template)])
+        for r in records.get(args.template, [])[:20]:
+            logger.info(f"{r.id}: score={r.score.raw_score:.3f} status={r.status.value}")
+
     elif args.mode == "export":
-        records = orch.get_best_strategies(limit=10)
-        for r in records:
-            code = orch.generate_strategy_code(r)
-            path = config.GENERATED_DIR / f"{r.id}.py"
-            path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_text(code)
-            print(f"Exported {r.id} to {path}")
+        records = engine.run_search([StrategyTemplate(args.template)])
+        for r in records.get(args.template, [])[:10]:
+            path = engine.deploy(r.id)
+            logger.info(f"Exported {r.id} → {path}")
 
 
 if __name__ == "__main__":

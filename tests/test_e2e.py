@@ -225,7 +225,7 @@ def test_scorer_demote_high_drawdown():
 
 # ── Integration: orchestrator round-trip ────────────────────────────
 def test_orchestrator_roundtrip():
-    from athena.orchestrator import AthenaOrchestrator
+    from athena.core.engine import AthenaEngine
     from athena.common.models import GenerationConfig
 
     cfg = GenerationConfig(
@@ -234,10 +234,9 @@ def test_orchestrator_roundtrip():
         population_size=4,
         generations=1,
     )
-    orch = AthenaOrchestrator(cfg)
-    records = orch.run_generation(StrategyTemplate.TREND_FOLLOWING, run_gates=False)
+    engine = AthenaEngine(cfg)
+    records = engine.evolve(StrategyTemplate.TREND_FOLLOWING, run_gates=False)
     assert len(records) > 0
-    # All records should have been saved to DB
     best = records[0]
     assert best.score.raw_score >= 0.0
 

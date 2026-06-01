@@ -1,18 +1,20 @@
-# Athena — AI Strategy Generator on Jesse
+# Athena — AI Strategy Generator on Freqtrade
 
 ## Architecture
 
-Athena wraps Jesse as a library and adds three layers on top:
+Athena wraps Freqtrade as a library and adds three layers on top:
 
-1. **Core (`athena/core`)** — Jesse wrapper, strategy loader, execution runner
+1. **Core (`athena/core`)** — Freqtrade wrapper, strategy loader
 2. **Generator (`athena/generator`)** — ML-based strategy generator + mutation engine
-3. **Evaluator (`athena/evaluator`)** — Backtest orchestration, walk-forward analysis, scoring
-4. **Services (`athena/services`)** — FastAPI orchestration, lifecycle management, WebSocket telemetry
+3. **Evaluator (`athena/evaluator`)** — Backtest orchestration, scoring
+4. **Services (`athena/services`)** — FastAPI orchestration, lifecycle management
 5. **Common (`athena/common`)** — Shared Pydantic models, config, utilities
+6. **Live (`athena/live`)** — Forward-test runner with live WebSocket candles
+7. **Market (`athena/market`)** — Real-time OHLCV via ccxt (Binance public API)
 
 ## Strategy Model
 
-A strategy in Athena is a **Jesse-compatible Python class** produced by the generator.
+A strategy in Athena is a **Freqtrade-compatible Python class** produced by the generator.
 
 Each strategy has:
 - `template_id` — base template (e.g. trend_following, mean_reversion, breakout)
@@ -20,13 +22,13 @@ Each strategy has:
 - `objective` — what it optimizes for (sharpe, sortino, win_rate, max_drawdown)
 - `performance` — backtest results (sharpe, total_return, max_dd, trades, etc.)
 - `metadata` — created_at, generation, parent_id (for lineage)
-- `status` — draft → backtest → optimize → paper → live → retired
+- `status` — draft → generated → backtest → optimize → paper → live → retired
 
 ## Generator Architecture
 
 The generator uses a **Genetic Algorithm + ML ensemble**:
 
-1. **Template Library** — Pre-defined strategy templates (Jesse classes with parametric holes)
+1. **Template Library** — Pre-defined strategy templates (Freqtrade `IStrategy` subclasses with parametric holes)
 2. **DNA Encoding** — Each strategy's free parameters encoded as a vector
 3. **Population** — Maintains N candidate strategies
 4. **Fitness** — Backtest score (sharpe × sortino × (1 - max_dd)) normalized
@@ -38,16 +40,15 @@ The generator uses a **Genetic Algorithm + ML ensemble**:
 
 ## Evaluator Architecture
 
-1. **Backtest** — Full historical backtest via Jesse engine
+1. **Backtest** — Full historical backtest via Freqtrade vectorized engine
 2. **Walk-Forward** — Train on first 70%, validate on last 30% (prevent overfit)
-3. **Monte Carlo** — Shuffle trade order, resample candles (Jesse built-in)
+3. **Monte Carlo** — Shuffle trade order, resample candles
 4. **Scoring** — Composite: sharpe(40%) + sortino(30%) + calmar(20%) + win_rate(10%)
 5. **Thresholds** — promote ≥ 0.6, demote < 0.3, retire after 3 demotions
 
 ## Lifecycle
 
-```
-draft → backtest → [score < 0.3] → retire
+draft → generated → backtest → [score < 0.3] → retire
               ↓ [score ≥ 0.6]
          optimize (GA fine-tuning) → paper_trade (30 days)
                                               ↓ [score ≥ 0.6]
@@ -58,11 +59,11 @@ draft → backtest → [score < 0.3] → retire
 
 ## Technology Stack
 
-- **Engine:** Jesse (backtest, live, optimization)
+- **Engine:** Freqtrade (backtest, live, optimization)
 - **Generator:** Python + DEAP (genetic algorithm) + scikit-learn (ML)
-- **Evaluator:** Jesse backtest + custom scoring
+- **Evaluator:** Freqtrade backtest + custom scoring
 - **API:** FastAPI + WebSocket
-- **DB:** SQLite (local) / PostgreSQL (production)
+- **DB:** PostgreSQL (production), SQLite (local/tests)
 - **Observability:** Prometheus + Grafana (optional)
 - **Infra:** Docker Compose
 
@@ -73,13 +74,16 @@ draft → backtest → [score < 0.3] → retire
 make up
 
 # Run generator
-cd athena && python -m generator.main --mode evolve --symbols BTC-USD --timeframe 1h
+python -m athena.generator.ga_engine --mode evolve --symbols BTC-USD --timeframe 1h
 
 # Run evaluator
-cd athena && python -m evaluator.main --strategy-id <id>
+python -m athena.evaluator.scorer --strategy-id <id>
 
 # Run API server
-cd athena && uvicorn services.api:app --reload
+uvicorn athena.services.api:app --reload
+
+# Run tests
+pytest tests/test_e2e.py -v
 ```
 
 ## Project Structure
@@ -88,52 +92,43 @@ cd athena && uvicorn services.api:app --reload
 athena/
 ├── core/
 │   ├── __init__.py
-│   ├── jesse_wrapper.py        # Initialize Jesse, run backtests
-│   ├── strategy_loader.py      # Load strategies dynamically
-│   ├── execution_runner.py     # Run backtest/live/paper
-│   └── config.py               # Jesse config management
+│   ├── freqtrade_wrapper.py   # Freqtrade temp-project backtest runner
+│   └── strategy_loader.py     # Load strategies dynamically
 ├── generator/
 │   ├── __init__.py
-│   ├── templates/              # Strategy template library
+│   ├── templates.py            # Strategy template library (IStrategy subclasses)
 │   ├── dna.py                  # DNA encoding/decoding
-│   ├── population.py           # Population management
-│   ├── fitness.py              # Fitness evaluation
 │   ├── ga_engine.py            # Genetic algorithm
-│   ├── ml_predictor.py         # ML fitness predictor
-│   ├── mutator.py              # Mutation operators
-│   ├── crossover.py            # Crossover operators
-│   └── main.py                 # Generator CLI entry
+│   └── templates/              # (future) Template variant directory
 ├── evaluator/
 │   ├── __init__.py
-│   ├── backtest_runner.py      # Run backtests
-│   ├── walk_forward.py         # Walk-forward analysis
-│   ├── monte_carlo.py          # Monte Carlo stress test
 │   ├── scorer.py               # Composite scoring
-│   └── main.py                 # Evaluator CLI entry
+│   └── backtest_runner.py      # (future) Batch backtest runner
 ├── services/
 │   ├── __init__.py
-│   ├── api.py                  # FastAPI app
-│   ├── lifecycle.py            # Strategy lifecycle management
-│   ├── websocket.py            # Real-time telemetry
+│   ├── api.py                  # FastAPI app (10 endpoints)
 │   └── models.py               # DB models (SQLAlchemy)
+├── live/
+│   ├── __init__.py
+│   ├── feed.py                 # ccxt Pro WebSocket streamer
+│   └── runner.py               # ForwardRunner + LiveRunner (signal-only)
+├── market/
+│   └── provider.py             # MarketDataProvider — Binance OHLCV via ccxt
 ├── common/
 │   ├── __init__.py
-│   ├── models.py               # Pydantic models
-│   ├── config.py               # App configuration
-│   └── utils.py                # Utilities
+│   ├── models.py               # Pydantic models (StrategyStatus, ScoreResult, etc.)
+│   └── config.py               # App configuration
 ├── tests/
 │   ├── __init__.py
-│   ├── test_generator.py
-│   ├── test_evaluator.py
-│   └── test_core.py
+│   └── test_e2e.py             # 22 end-to-end tests (all passing)
 ├── scripts/
 │   └── setup.sh                # One-time setup
 ├── infra/
 │   └── docker-compose.yml      # Local infrastructure
-├── config/
-│   ├── jesse_config.py         # Jesse configuration
-│   └── athena.yaml             # Athena configuration
+│   ├── postgres.yml
+│── .hermes/
+│   └── PROJECT_CONTEXT.md      # Runtime project knowledge
 ├── Makefile
-├── pyproject.toml
+├── pyproject.toml              # Dependencies (freqtrade, ccxt, pandas-ta)
 └── README.md
 ```

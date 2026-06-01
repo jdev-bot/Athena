@@ -65,7 +65,7 @@ class Deployer:
             pair=pair,
             timeframe=timeframe,
             mode=mode,
-            wallet_balance=10_000.0,
+            wallet_balance=50.0,
             max_open_trades=1,
             dna=record.dna,
             risk=risk,

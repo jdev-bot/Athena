@@ -319,13 +319,20 @@ async def live_start(req: LiveStartRequest):
     if req.mode not in ("paper", "live"):
         raise HTTPException(status_code=400, detail="mode must be 'paper' or 'live'")
 
+    # Gate: live mode requires API keys
+    if req.mode == "live" and (not req.exchange_key or not req.exchange_secret):
+        raise HTTPException(status_code=400, detail="live mode requires exchange_key and exchange_secret")
+
+    # Gate: default sandbox to True for safety (testnet first)
+    sandbox = req.sandbox if req.mode == "live" else True
+
     runner = LiveRunner(
         strategy_id=req.strategy_id,
         mode=req.mode,
         risk={"max_drawdown": req.max_drawdown, "daily_loss_limit": req.daily_loss_limit},
         exchange_key=req.exchange_key,
         exchange_secret=req.exchange_secret,
-        sandbox=req.sandbox,
+        sandbox=sandbox,
     )
     await runner.start()
     _runners[runner.session_id] = runner

@@ -11,7 +11,7 @@ from typing import Any, Dict, Optional
 
 
 # ── defaults aligned with Freqtrade constants ───────────────────
-DEFAULT_WALLET = 10_000.0
+DEFAULT_WALLET = 50.0  # Starting capital for small-account growth
 DEFAULT_FEE = 0.001
 DEFAULT_TIMEFRAME = "1h"
 DEFAULT_STAKE_CURRENCY = "USDT"

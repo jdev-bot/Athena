@@ -36,6 +36,20 @@ class {class_name}(IStrategy):
     rsi_overbought = {rsi_overbought}
     rsi_oversold = {rsi_oversold}
 
+    # ── position sizing ────────────────────────────────────────────
+    position_size_pct = {position_size_pct}
+    min_stake_usd = {min_stake_usd}
+    max_stake_usd = {max_stake_usd}
+
+    def custom_stake_amount(
+        self, pair, current_time, current_rate, proposed_stake, min_stake, max_stake, **kwargs
+    ):
+        balance = self.wallets.get_total(self.stake_currency)
+        stake = balance * self.position_size_pct
+        stake = max(stake, self.min_stake_usd)
+        stake = min(stake, self.max_stake_usd)
+        return max(min(stake, max_stake), min_stake)
+
     def populate_indicators(self, dataframe: pd.DataFrame, metadata: dict) -> pd.DataFrame:
         dataframe['fast'] = ta.ema(dataframe['close'], length=self.fast_period)
         dataframe['slow'] = ta.ema(dataframe['close'], length=self.slow_period)
@@ -91,6 +105,20 @@ class {class_name}(IStrategy):
     mean_period = {mean_period}
     deviation_threshold = {deviation_threshold}
 
+    # ── position sizing ────────────────────────────────────────────
+    position_size_pct = {position_size_pct}
+    min_stake_usd = {min_stake_usd}
+    max_stake_usd = {max_stake_usd}
+
+    def custom_stake_amount(
+        self, pair, current_time, current_rate, proposed_stake, min_stake, max_stake, **kwargs
+    ):
+        balance = self.wallets.get_total(self.stake_currency)
+        stake = balance * self.position_size_pct
+        stake = max(stake, self.min_stake_usd)
+        stake = min(stake, self.max_stake_usd)
+        return max(min(stake, max_stake), min_stake)
+
     def populate_indicators(self, dataframe: pd.DataFrame, metadata: dict) -> pd.DataFrame:
         dataframe['sma'] = ta.sma(dataframe['close'], length=self.mean_period)
         dataframe['rsi'] = ta.rsi(dataframe['close'], length=self.rsi_period)
@@ -144,6 +172,20 @@ class {class_name}(IStrategy):
     atr_period = {atr_period}
     atr_multiplier = {atr_multiplier}
 
+    # ── position sizing ────────────────────────────────────────────
+    position_size_pct = {position_size_pct}
+    min_stake_usd = {min_stake_usd}
+    max_stake_usd = {max_stake_usd}
+
+    def custom_stake_amount(
+        self, pair, current_time, current_rate, proposed_stake, min_stake, max_stake, **kwargs
+    ):
+        balance = self.wallets.get_total(self.stake_currency)
+        stake = balance * self.position_size_pct
+        stake = max(stake, self.min_stake_usd)
+        stake = min(stake, self.max_stake_usd)
+        return max(min(stake, max_stake), min_stake)
+
     def populate_indicators(self, dataframe: pd.DataFrame, metadata: dict) -> pd.DataFrame:
         dataframe['high_max'] = dataframe['high'].rolling(window=self.lookback).max()
         dataframe['low_min'] = dataframe['low'].rolling(window=self.lookback).min()
@@ -189,6 +231,20 @@ class {class_name}(IStrategy):
     signal_period = {signal_period}
     momentum_threshold = {momentum_threshold}
     rsi_period = {rsi_period}
+
+    # ── position sizing ────────────────────────────────────────────
+    position_size_pct = {position_size_pct}
+    min_stake_usd = {min_stake_usd}
+    max_stake_usd = {max_stake_usd}
+
+    def custom_stake_amount(
+        self, pair, current_time, current_rate, proposed_stake, min_stake, max_stake, **kwargs
+    ):
+        balance = self.wallets.get_total(self.stake_currency)
+        stake = balance * self.position_size_pct
+        stake = max(stake, self.min_stake_usd)
+        stake = min(stake, self.max_stake_usd)
+        return max(min(stake, max_stake), min_stake)
 
     def populate_indicators(self, dataframe: pd.DataFrame, metadata: dict) -> pd.DataFrame:
         dataframe['rsi'] = ta.rsi(dataframe['close'], length=self.rsi_period)
@@ -243,6 +299,20 @@ class {class_name}(IStrategy):
     trailing_stop_positive = 0.01
     trailing_stop_positive_offset = 0.02
 
+    # ── position sizing ────────────────────────────────────────────
+    position_size_pct = {position_size_pct}
+    min_stake_usd = {min_stake_usd}
+    max_stake_usd = {max_stake_usd}
+
+    def custom_stake_amount(
+        self, pair, current_time, current_rate, proposed_stake, min_stake, max_stake, **kwargs
+    ):
+        balance = self.wallets.get_total(self.stake_currency)
+        stake = balance * self.position_size_pct
+        stake = max(stake, self.min_stake_usd)
+        stake = min(stake, self.max_stake_usd)
+        return max(min(stake, max_stake), min_stake)
+
     def populate_indicators(self, dataframe: pd.DataFrame, metadata: dict) -> pd.DataFrame:
         dataframe['atr'] = ta.atr(dataframe['high'], dataframe['low'], dataframe['close'], length=self.atr_period)
         dataframe['volatility'] = dataframe['atr'] / dataframe['close']
@@ -284,7 +354,9 @@ TEMPLATE_SPECS: Dict[StrategyTemplate, List[DNASpec]] = {
         DNASpec(name="rsi_period", type="int", min=5, max=30, default=14),
         DNASpec(name="rsi_overbought", type="int", min=60, max=90, default=70),
         DNASpec(name="rsi_oversold", type="int", min=10, max=40, default=30),
-        DNASpec(name="position_size", type="float", min=0.01, max=0.5, default=0.05),
+        DNASpec(name="position_size_pct", type="float", min=0.02, max=0.50, default=0.10),
+        DNASpec(name="min_stake_usd", type="float", min=5.0, max=50.0, default=5.0),
+        DNASpec(name="max_stake_usd", type="float", min=20.0, max=500.0, default=100.0),
     ],
     StrategyTemplate.MEAN_REVERSION: [
         DNASpec(name="bb_period", type="int", min=10, max=50, default=20),
@@ -294,26 +366,34 @@ TEMPLATE_SPECS: Dict[StrategyTemplate, List[DNASpec]] = {
         DNASpec(name="rsi_oversold", type="int", min=10, max=40, default=30),
         DNASpec(name="mean_period", type="int", min=10, max=100, default=50),
         DNASpec(name="deviation_threshold", type="float", min=0.001, max=0.05, default=0.01),
-        DNASpec(name="position_size", type="float", min=0.01, max=0.5, default=0.05),
+        DNASpec(name="position_size_pct", type="float", min=0.02, max=0.50, default=0.10),
+        DNASpec(name="min_stake_usd", type="float", min=5.0, max=50.0, default=5.0),
+        DNASpec(name="max_stake_usd", type="float", min=20.0, max=500.0, default=100.0),
     ],
     StrategyTemplate.BREAKOUT: [
         DNASpec(name="lookback", type="int", min=10, max=100, default=20),
         DNASpec(name="atr_period", type="int", min=5, max=30, default=14),
         DNASpec(name="atr_multiplier", type="float", min=0.5, max=3.0, default=1.5),
         DNASpec(name="volume_factor", type="float", min=1.0, max=5.0, default=2.0),
-        DNASpec(name="position_size", type="float", min=0.01, max=0.5, default=0.05),
+        DNASpec(name="position_size_pct", type="float", min=0.02, max=0.50, default=0.10),
+        DNASpec(name="min_stake_usd", type="float", min=5.0, max=50.0, default=5.0),
+        DNASpec(name="max_stake_usd", type="float", min=20.0, max=500.0, default=100.0),
     ],
     StrategyTemplate.MOMENTUM: [
         DNASpec(name="momentum_period", type="int", min=5, max=50, default=10),
         DNASpec(name="signal_period", type="int", min=5, max=30, default=9),
         DNASpec(name="momentum_threshold", type="float", min=0.1, max=5.0, default=1.0),
         DNASpec(name="rsi_period", type="int", min=5, max=30, default=14),
-        DNASpec(name="position_size", type="float", min=0.01, max=0.5, default=0.05),
+        DNASpec(name="position_size_pct", type="float", min=0.02, max=0.50, default=0.10),
+        DNASpec(name="min_stake_usd", type="float", min=5.0, max=50.0, default=5.0),
+        DNASpec(name="max_stake_usd", type="float", min=20.0, max=500.0, default=100.0),
     ],
     StrategyTemplate.VOLATILITY: [
         DNASpec(name="atr_period", type="int", min=5, max=30, default=14),
         DNASpec(name="volatility_threshold", type="float", min=0.005, max=0.1, default=0.02),
-        DNASpec(name="position_size", type="float", min=0.01, max=0.5, default=0.05),
+        DNASpec(name="position_size_pct", type="float", min=0.02, max=0.50, default=0.10),
+        DNASpec(name="min_stake_usd", type="float", min=5.0, max=50.0, default=5.0),
+        DNASpec(name="max_stake_usd", type="float", min=20.0, max=500.0, default=100.0),
         DNASpec(name="tp_multiplier", type="float", min=1.0, max=5.0, default=2.0),
         DNASpec(name="sl_multiplier", type="float", min=0.5, max=3.0, default=1.5),
     ],

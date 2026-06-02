@@ -159,5 +159,6 @@ class PortfolioConfig(BaseModel):
     max_correlation: float = 0.80                     # flag if pairwise corr >0.8
     rebalance_interval_hours: int = 24
     portfolio_max_drawdown_kill: float = 0.15         # kill all at 15% portfolio DD
+    max_drawdown: float = 0.15                       # alias used by dry-run bridge
     target_volatility_annual: float = 0.25            # 25% annual vol target
     allocation_method: str = "inverse_vol"            # inverse_vol, equal_risk, equal_weight

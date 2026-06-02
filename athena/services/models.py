@@ -98,6 +98,26 @@ class LiveSnapshot(Base):
     __table_args__ = (Index("ix_snapshots_session_time", "session_id", "timestamp"),)
 
 
+class Signal(Base):
+    """Dry-run / forward-test signals persisted for PnL tracking and post-analysis."""
+    __tablename__ = "signals"
+
+    id = Column(String, primary_key=True)
+    strategy_id = Column(String, nullable=False, index=True)
+    symbol = Column(String, nullable=False, index=True)
+    direction = Column(String, nullable=False)   # long / short
+    confidence = Column(Float, default=1.0)
+    entry_price = Column(Float, nullable=False)
+    exit_price = Column(Float, nullable=True)
+    timestamp = Column(DateTime, default=_utcnow)
+    exit_time = Column(DateTime, nullable=True)
+    pnl_pct = Column(Float, default=0.0)
+    pnl_abs = Column(Float, default=0.0)
+    status = Column(String, default="open")        # open | closed
+    triggered_kill_switch = Column(String, default="")
+    __table_args__ = (Index("ix_signals_strategy", "strategy_id", "timestamp"),)
+
+
 # Setup
 _DB_ENGINE = None
 

@@ -188,11 +188,13 @@ class FreqtradeWrapper:
             cfg["dry_run"] = True
 
             # Load exchange
-            exchange_instance = ExchangeResolver.load_exchange(cfg, load_leverage_tiers=True)
-
-            # Backtest
-            bt = Backtesting(cfg, exchange=exchange_instance)
-            bt.start()
+            import warnings
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore", RuntimeWarning)
+                exchange_instance = ExchangeResolver.load_exchange(cfg, load_leverage_tiers=True)
+                # Backtest
+                bt = Backtesting(cfg, exchange=exchange_instance)
+                bt.start()
 
             # Extract metrics from bt.results
             results = bt.results

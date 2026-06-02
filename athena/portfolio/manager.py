@@ -36,6 +36,8 @@ class PortfolioManager:
         self._pnl_history: Dict[str, List[float]] = {}   # daily closed PnL per strategy
         self._equity_peak: float = self.cfg.total_capital
         self._last_rebalance: Optional[datetime] = None
+        self._daily_pnl: List[float] = []
+        self._live: bool = True
         self._load_from_db()
 
     # ── public lifecycle ───────────────────────────────────────────────
@@ -234,14 +236,46 @@ class PortfolioManager:
             if abs(pos.max_drawdown) >= self.cfg.portfolio_max_drawdown_kill * 1.5:
                 return True, f"position_drawdown {pos.strategy_id} {pos.max_drawdown:.2%}"
         return False, ""
-
     def kill_all(self, reason: str = "portfolio_kill_switch") -> None:
-        """Emergency stop all positions."""
+        """Set all positions to dead and persist."""
+        self._live = False
         for sid, pos in self._positions.items():
             pos.status = "stopped"
             self._persist_position(pos)
             logger.critical(f"KILLED {sid}: {reason}")
         logger.critical(f"PORTFOLIO KILL SWITCH: {reason}")
+
+    # ------------------------------------------------------------------
+    # Dry-run bridge helpers
+    # ------------------------------------------------------------------
+    def reset(self) -> None:
+        """Reset internal state for a fresh dry-run session."""
+        self._daily_pnl = []
+        self._live = True
+
+    def on_trade(self, *, pair: str, pnl: float, timestamp: datetime, strategy_id: str) -> None:
+        """Record a closed signal for trigger tracking."""
+        self._daily_pnl.append(pnl)
+        if len(self._daily_pnl) > 10_000:
+            self._daily_pnl = self._daily_pnl[-5_000:]
+
+    def is_kill_switch_triggered(self) -> bool:
+        return not self._live or (self.max_drawdown() <= -self.cfg.max_drawdown)
+
+    def daily_loss(self) -> float:
+        if not self._daily_pnl:
+            return 0.0
+        return sum(self._daily_pnl[-500:])  # rough rolling
+
+    def max_drawdown(self) -> float:
+        if not self._daily_pnl:
+            return 0.0
+        cum = np.maximum.accumulate(np.cumsum(self._daily_pnl))
+        if cum[-1] == 0:
+            return 0.0
+        trough = np.minimum.accumulate(np.cumsum(self._daily_pnl))
+        dd = np.min((np.cumsum(self._daily_pnl) - cum) / (cum + 1e-9))
+        return float(dd)
 
     def get_correlation_matrix(self) -> Dict[str, Dict[str, float]]:
         """Compute pairwise correlation matrix from backtest returns.

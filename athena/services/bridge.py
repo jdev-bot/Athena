@@ -87,6 +87,12 @@ class DryRunTrader:
             self._persist(entry)
             logger.info("dry-run %s %s at %.2f  (strategy=%s)", signal, symbol, close, strategy_id)
 
+            # telemetry
+            from athena.services.telemetry import TelemetryCollector
+            _tele = TelemetryCollector()
+            _tele.record_signal(signal)
+            _tele.set_kill_switch(self._killed)
+
         # --- equity / kill-switch guard ---
         self._check_kill_guards()
 

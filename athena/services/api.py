@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 from typing import List, Optional
 from pathlib import Path
 
-from fastapi import FastAPI, HTTPException, BackgroundTasks
+from fastapi import FastAPI, HTTPException, BackgroundTasks, Response
 from pydantic import BaseModel, Field
 
 from athena.common.models import StrategyTemplate, StrategyStatus
@@ -17,6 +17,10 @@ from athena.common.config import config
 from athena.core.engine import AthenaEngine
 from athena.common.models import GenerationConfig
 from athena.core.hyperopt import HyperoptFinisher
+from athena.services.telemetry import TelemetryCollector, generate_metrics, metrics_content_type
+
+# ── single telemetry collector ───────────────────────────────────
+_telemetry = TelemetryCollector()
 
 
 # ── lifespan ──────────────────────────────────────────────────────
@@ -161,6 +165,7 @@ async def generate_strategies(req: GenerateRequest):
         session.add(record)
         created.append({"id": sid, "name": record.name, "template": tpl.value, "dna": dna})
     session.commit()
+    _telemetry.record_evaluation(req.count)
     return {"strategies": created}
 
 
@@ -258,13 +263,13 @@ async def run_backtest(req: BacktestRequest):
         row.raw_score = record.score.raw_score
         row.verdict = record.score.verdict
         metrics = record.performance.model_dump()
+        _telemetry.record_backtest()
     except Exception as exc:
         row.status = StrategyStatus.BACKTEST_FAILED.value
         metrics = {"error": str(exc)}
 
     row.updated_at = datetime.now(timezone.utc)
     session.commit()
-
     return BacktestResponse(
         strategy_id=req.strategy_id,
         status=row.status,
@@ -616,3 +621,9 @@ async def live_status(session_id: str):
     if not stats:
         raise HTTPException(status_code=404, detail="Session record missing")
     return LiveStatusResponse(**stats)
+
+
+# ── telemetry ──────────────────────────────────────────────────────
+@app.get("/metrics")
+async def metrics():
+    return Response(content=generate_metrics(), media_type=metrics_content_type())

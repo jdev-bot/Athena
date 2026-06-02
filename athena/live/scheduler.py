@@ -128,6 +128,14 @@ class AutonomousScheduler:
         else:
             self.cycles_without_promotion = 0
 
+        # telemetry
+        from athena.services.telemetry import TelemetryCollector
+        _tele = TelemetryCollector()
+        _tele.record_scheduler_cycle()
+        _tele.record_evaluation(evaluated_this_cycle)
+        if promoted_this_cycle:
+            _tele.record_scheduler_promotion()
+
         # ── Adaptive expansion ──
         if self.cycles_without_promotion >= PATIENCE_CYCLES:
             logger.warning(f"No promotions for {PATIENCE_CYCLES} cycles. Expanding search.")

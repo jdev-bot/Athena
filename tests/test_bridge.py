@@ -88,11 +88,11 @@ class TestForwardRunnerUnit:
             id="test",
             name="TestStrategy",
             template=StrategyTemplate.TREND_FOLLOWING,
-            dna=StrategyDNA(template="trend_following", genes=[0.5, 0.5, 0.5, 0.5]),
+            dna=StrategyDNA(template=StrategyTemplate.TREND_FOLLOWING, vector={"fast_period": 12, "slow_period": 26}),
             generation=0,
         )
         runner = ForwardRunner()
         # No cached data => raises
         with pytest.raises(RuntimeError, match="No candle data"):
-            runner.run(record, trader, pair="FAKE/PAIR", timeframe="1h")
+            runner.run(record, trader, pairs=["FAKE/PAIR"], timeframe="1h")
 

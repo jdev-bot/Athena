@@ -34,6 +34,13 @@ async def lifespan(app: FastAPI):
         except Exception as exc:
             import logging
             logging.getLogger(__name__).warning(f"Auto-scheduler failed to start: {exc}")
+    if config.FORWARD_SCHEDULER_AUTO:
+        from athena.live.forward_scheduler import get_forward_scheduler
+        try:
+            get_forward_scheduler().start()
+        except Exception as exc:
+            import logging
+            logging.getLogger(__name__).warning(f"Forward scheduler failed to start: {exc}")
     yield
 
 
@@ -529,6 +536,27 @@ async def scheduler_stop():
 @app.get("/scheduler/status")
 async def scheduler_status():
     return get_scheduler().status()
+
+
+# ── forward scheduler ──────────────────────────────────────────────
+from athena.live.forward_scheduler import get_forward_scheduler  # noqa: E402
+
+
+@app.post("/forward/scheduler/start")
+async def forward_scheduler_start():
+    get_forward_scheduler().start()
+    return {"running": True}
+
+
+@app.post("/forward/scheduler/stop")
+async def forward_scheduler_stop():
+    get_forward_scheduler().stop()
+    return {"running": False}
+
+
+@app.get("/forward/scheduler/status")
+async def forward_scheduler_status():
+    return get_forward_scheduler().status()
 
 
 # ── live trading endpoints ─────────────────────────────────────────

@@ -47,6 +47,8 @@ class Config:
     # Scheduler
     AUTO_SCHEDULER = os.getenv("AUTO_SCHEDULER", "false").lower() in ("true", "1", "yes")
     SCHEDULER_INTERVAL_SECONDS = int(os.getenv("SCHEDULER_INTERVAL", "3600"))
+    FORWARD_SCHEDULER_AUTO = os.getenv("FORWARD_SCHEDULER_AUTO", "false").lower() in ("true", "1", "yes")
+    FORWARD_SCHEDULER_INTERVAL = int(os.getenv("FORWARD_SCHEDULER_INTERVAL", "3600"))
     
     # Server
     API_PORT = int(os.getenv("API_PORT", "8000"))

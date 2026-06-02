@@ -9,6 +9,12 @@ from athena.services.models import init_db
 @pytest.fixture
 def client():
     init_db()
+    # fresh DB — clear any residual rows from prior test modules
+    from athena.services.models import get_session, Signal
+    session = get_session()
+    session.query(Signal).delete()
+    session.commit()
+    session.close()
     return TestClient(app)
 
 

@@ -70,6 +70,21 @@ class AthenaEngine:
                     f"gen={self.cfg.generations} gates={run_gates} workers={pw}")
         logger.info("=" * 60)
 
+        # Detect regime from cached candles
+        from athena.market.regime import detect_regime, get_suitable_templates, Regime
+        candles = self.freqtrade.load_cached_candles("BTC/USDT:USDT", "1h")
+        regime = detect_regime(candles) if candles is not None else Regime.UNKNOWN
+        suitable = get_suitable_templates(regime)
+        logger.info(f"Market regime: {regime.value} | suitable templates: {suitable}")
+
+        # Determine allowed templates — if requested template isn't suitable, still include it
+        # (the user explicitly asked for it) but add suitable ones for diversity
+        allowed = {template.value}
+        for t in suitable:
+            allowed.add(t)
+        from athena.common.models import StrategyTemplate
+        allowed_templates = [t for t in StrategyTemplate if t.value in allowed]
+
         ga = GAEngine(
             template=template,
             population_size=self.cfg.population_size,
@@ -77,6 +92,7 @@ class AthenaEngine:
             mutation_rate=self.cfg.mutation_rate,
             crossover_rate=self.cfg.crossover_rate,
             elitism_count=self.cfg.elitism_count,
+            allowed_templates=allowed_templates,
         )
         ga.initialize_population()
 

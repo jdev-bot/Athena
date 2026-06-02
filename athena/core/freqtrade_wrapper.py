@@ -5,7 +5,7 @@ import logging
 import tempfile
 import shutil
 from pathlib import Path
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 from datetime import datetime
 
 logger = logging.getLogger(__name__)
@@ -286,6 +286,29 @@ class FreqtradeWrapper:
             "avg_trade": 0.0,
             "profit_factor": 0.0,
         }
+
+    def load_cached_candles(self, pair: str = "BTC/USDT:USDT", timeframe: str = "1h") -> Optional[np.ndarray]:
+        """Load cached candles from shared data dir as numpy array [timestamp, open, high, low, close, volume]."""
+        import pyarrow.feather as feather
+        cache_dir = Path("/tmp/athena_shared_data/data/binance/futures")
+        key = _pair_to_key(pair)
+        # Try 1h first, fallback to 5m
+        for tf in [timeframe, "5m", "1h"]:
+            fpath = cache_dir / f"{key}-{tf}-futures.feather"
+            if fpath.exists():
+                df = feather.read_feather(fpath)
+                # Build numpy array
+                ts = np.arange(len(df))  # use index as proxy timestamp
+                arr = np.column_stack([
+                    ts,
+                    df["open"].values.astype(float),
+                    df["high"].values.astype(float),
+                    df["low"].values.astype(float),
+                    df["close"].values.astype(float),
+                    df["volume"].values.astype(float),
+                ])
+                return arr
+        return None
 
     @staticmethod
     def compile_strategy(record) -> str:

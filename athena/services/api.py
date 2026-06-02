@@ -341,6 +341,78 @@ async def deploy_strategy(strategy_id: str) -> DeployResponse:
     return DeployResponse(strategy_id=strategy_id, path=str(path))
 
 
+# ── portfolio endpoints ────────────────────────────────────────────
+
+from athena.portfolio.manager import PortfolioManager
+
+
+class PortfolioAddRequest(BaseModel):
+    strategy_id: str
+    initial_weight: Optional[float] = None
+
+
+class PortfolioRebalanceRequest(BaseModel):
+    method: Optional[str] = None
+
+
+@app.get("/portfolio/status")
+async def portfolio_status():
+    """Get current portfolio snapshot."""
+    mgr = PortfolioManager()
+    return mgr.snapshot().model_dump(mode="json")
+
+
+@app.post("/portfolio/add")
+async def portfolio_add(req: PortfolioAddRequest):
+    """Add a PROMOTED strategy to the portfolio."""
+    mgr = PortfolioManager()
+    try:
+        pos = mgr.add_strategy(req.strategy_id, req.initial_weight)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    return pos.model_dump(mode="json")
+
+
+@app.post("/portfolio/remove")
+async def portfolio_remove(strategy_id: str, reason: str = "removed"):
+    """Remove a strategy from the portfolio."""
+    mgr = PortfolioManager()
+    mgr.remove_strategy(strategy_id, reason)
+    return {"strategy_id": strategy_id, "status": "removed"}
+
+
+@app.post("/portfolio/pause")
+async def portfolio_pause(strategy_id: str):
+    """Pause a strategy in the portfolio."""
+    mgr = PortfolioManager()
+    mgr.pause_strategy(strategy_id)
+    return {"strategy_id": strategy_id, "status": "paused"}
+
+
+@app.post("/portfolio/resume")
+async def portfolio_resume(strategy_id: str):
+    """Resume a paused strategy."""
+    mgr = PortfolioManager()
+    mgr.resume_strategy(strategy_id)
+    return {"strategy_id": strategy_id, "status": "resumed"}
+
+
+@app.post("/portfolio/rebalance")
+async def portfolio_rebalance(req: PortfolioRebalanceRequest):
+    """Rebalance portfolio weights."""
+    mgr = PortfolioManager()
+    snap = mgr.rebalance(req.method)
+    return snap.model_dump(mode="json")
+
+
+@app.post("/portfolio/kill")
+async def portfolio_kill(reason: str = "manual_kill"):
+    """Emergency stop all portfolio positions."""
+    mgr = PortfolioManager()
+    mgr.kill_all(reason)
+    return {"status": "killed", "reason": reason}
+
+
 # ── scheduler control ──────────────────────────────────────────────
 from athena.live.scheduler import get_scheduler  # noqa: E402
 

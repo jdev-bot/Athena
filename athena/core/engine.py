@@ -302,9 +302,16 @@ class AthenaEngine:
         return record
 
     def _promote(self, record: StrategyRecord) -> None:
-        """Mark strategy as PROMOTED and export to deployable directory."""
+        """Mark strategy as PROMOTED, run hyperopt finisher, export to deployable directory."""
         record.status = StrategyStatus.PROMOTED
         self._persist(record)
+        try:
+            from athena.core.hyperopt import HyperoptFinisher
+            finisher = HyperoptFinisher(epochs=15, loss_function="SharpeHyperOptLoss")
+            record = finisher.run(record)
+            self._persist(record)
+        except Exception as exc:
+            logger.warning(f"Hyperopt finisher failed for {record.id}: {exc}")
         try:
             self.deploy(record.id, target_dir=config.GENERATED_DIR)
         except Exception as exc:

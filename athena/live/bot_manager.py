@@ -21,6 +21,13 @@ from typing import Any, Dict, Optional
 import requests
 
 from athena.live.deployer import Deployer
+import warnings
+warnings.filterwarnings(
+    "ignore",
+    message=r"coroutine 'Exchange\._api_reload_markets' was never awaited",
+    category=RuntimeWarning,
+)
+
 from athena.services.models import get_session, LiveSessionModel
 
 

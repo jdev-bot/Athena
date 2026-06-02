@@ -16,6 +16,7 @@ from athena.generator.templates import TEMPLATE_MAP, TEMPLATE_SPECS
 from athena.common.config import config
 from athena.core.engine import AthenaEngine
 from athena.common.models import GenerationConfig
+from athena.core.hyperopt import HyperoptFinisher
 
 
 # ── lifespan ──────────────────────────────────────────────────────
@@ -467,6 +468,42 @@ async def drift_demote(strategy_id: str, reason: str = "manual"):
     await loop._demote_strategy(strategy_id, reason)
     return {"strategy_id": strategy_id, "status": "demoted", "reason": reason}
 
+
+
+
+
+class HyperoptRequest(BaseModel):
+    strategy_id: str
+    epochs: int = 15
+    loss_function: str = "SharpeHyperOptLoss"
+    spaces: str = "buy sell"
+
+
+class HyperoptResponse(BaseModel):
+    strategy_id: str
+    status: str
+    best_loss: Optional[float] = None
+    params: Optional[dict] = None
+
+
+@app.post("/hyperopt", response_model=HyperoptResponse)
+async def run_hyperopt(req: HyperoptRequest):
+    """Run post-promotion hyperopt on a strategy to fine-tune parameters."""
+    engine = AthenaEngine()
+    record = engine.evaluate(req.strategy_id)
+    finisher = HyperoptFinisher(
+        epochs=req.epochs,
+        loss_function=req.loss_function,
+        spaces=req.spaces,
+    )
+    record = finisher.run(record)
+    engine._persist(record)
+    return HyperoptResponse(
+        strategy_id=req.strategy_id,
+        status="ok",
+        best_loss=record.metadata.get("hyperopt", {}).get("best_loss"),
+        params=record.metadata.get("hyperopt", {}).get("raw_params"),
+    )
 
 # ── scheduler control ──────────────────────────────────────────────
 from athena.live.scheduler import get_scheduler  # noqa: E402

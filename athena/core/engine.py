@@ -72,8 +72,8 @@ class AthenaEngine:
 
         # Detect regime from cached candles
         from athena.market.regime import detect_regime, get_suitable_templates, Regime
-        candles = self.freqtrade.load_cached_candles("BTC/USDT:USDT", "1h")
-        regime = detect_regime(candles) if candles is not None else Regime.UNKNOWN
+        df_candles = self.freqtrade.load_cached_candles("BTC/USDT:USDT", "1h")
+        regime = detect_regime(df_candles) if df_candles is not None else Regime.UNKNOWN
         suitable = get_suitable_templates(regime)
         logger.info(f"Market regime: {regime.value} | suitable templates: {suitable}")
 

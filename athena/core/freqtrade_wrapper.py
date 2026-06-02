@@ -26,7 +26,6 @@ from athena.common.config import config as athena_config
 from athena.generator.dna import DNAEncoder
 from athena.generator.templates import TEMPLATE_MAP, TEMPLATE_SPECS
 from athena.common.models import StrategyTemplate
-from athena.market.provider import MarketDataProvider
 
 
 # ── helpers ─────────────────────────────────────────────────────
@@ -128,11 +127,7 @@ class FreqtradeWrapper:
         start_date: str,
         end_date: str,
     ):
-        """Download OHLCV via Freqtrade CLI into the temp project's data dir.
-
-        Reuses `freqtrade download-data` so files are in the exact format expected
-        by Freqtrade's backtesting engine (feather format, correct directory layout).
-        """
+        """Download OHLCV via Freqtrade CLI directly into the temp project data dir."""
         futures_dir = data_dir / "futures"
         futures_dir.mkdir(parents=True, exist_ok=True)
         dest_file = futures_dir / f"{_pair_to_key(pair)}-{timeframe}-futures.feather"
@@ -144,44 +139,19 @@ class FreqtradeWrapper:
             shutil.copy2(cached, dest_file)
             return
 
-        # Otherwise download via freqtrade CLI (more reliable than manual feather creation)
+        # Download directly into the temp project's data dir using Freqtrade CLI
         from athena.live.data_downloader import download_pair_data
-        tmp_deploy = Path(tempfile.mkdtemp(prefix="athena_tmp_dl_"))
-        config = {
-            "strategy": "AthenaStrategy",
-            "timeframe": timeframe,
-            "pairs": [pair],
-            "stake_currency": "USDT",
-            "stake_amount": "unlimited",
-            "dry_run": True,
-            "exchange": {
-                "name": "binance",
-                "key": "",
-                "secret": "",
-                "pair_whitelist": [pair],
-                "pair_blacklist": [],
-                "sandbox": False,
-            },
-            "pairlists": [{"method": "StaticPairList"}],
-            "trading_mode": "futures",
-            "margin_mode": "cross",
-            "dataformat_ohlcv": "feather",
-        }
-        (tmp_deploy / "config.json").write_text(json.dumps(config, indent=2))
         days = max(7, (pd.to_datetime(end_date) - pd.to_datetime(start_date)).days + 1)
         try:
-            download_pair_data(tmp_deploy, pair, timeframe, days=days)
+            # download_pair_data expects a deploy_dir with config.json already
+            download_pair_data(data_dir.parent, pair, timeframe, days=days)
         except RuntimeError as exc:
             logger.warning(f"download_pair_data failed: {exc}")
-        # Copy downloaded files into our target dir
-        src = tmp_deploy / "data" / "binance" / "futures"
-        if src.exists():
-            for f in src.glob("*.feather"):
-                shutil.copy2(f, futures_dir / f.name)
-                # Also populate shared cache
-                cache_dir.mkdir(parents=True, exist_ok=True)
-                shutil.copy2(f, cache_dir / f.name)
-        shutil.rmtree(tmp_deploy, ignore_errors=True)
+
+        # Populate shared cache
+        if dest_file.exists():
+            cache_dir.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(dest_file, cache_dir / dest_file.name)
 
     # ── backtest ──────────────────────────────────────────────────
     def run_backtest(
@@ -287,28 +257,27 @@ class FreqtradeWrapper:
             "profit_factor": 0.0,
         }
 
-    def load_cached_candles(self, pair: str = "BTC/USDT:USDT", timeframe: str = "1h") -> Optional[np.ndarray]:
-        """Load cached candles from shared data dir as numpy array [timestamp, open, high, low, close, volume]."""
-        import pyarrow.feather as feather
-        cache_dir = Path("/tmp/athena_shared_data/data/binance/futures")
-        key = _pair_to_key(pair)
-        # Try 1h first, fallback to 5m
-        for tf in [timeframe, "5m", "1h"]:
-            fpath = cache_dir / f"{key}-{tf}-futures.feather"
-            if fpath.exists():
-                df = feather.read_feather(fpath)
-                # Build numpy array
-                ts = np.arange(len(df))  # use index as proxy timestamp
-                arr = np.column_stack([
-                    ts,
-                    df["open"].values.astype(float),
-                    df["high"].values.astype(float),
-                    df["low"].values.astype(float),
-                    df["close"].values.astype(float),
-                    df["volume"].values.astype(float),
-                ])
-                return arr
-        return None
+    def load_cached_candles(self, pair: str = "BTC/USDT:USDT", timeframe: str = "1h",
+                            timerange: Optional[str] = None) -> Optional[pd.DataFrame]:
+        """Load cached candles using Freqtrade's native load_data().
+
+        Returns a DataFrame with standard OHLCV columns or None if no data.
+        """
+        try:
+            from freqtrade.data.history.history_utils import load_data
+            from freqtrade.configuration import TimeRange
+            tr = TimeRange.parse_timerange(timerange) if timerange else None
+            data_dict = load_data(
+                datadir=Path("/tmp/athena_shared_data/data/binance"),
+                timeframe=timeframe,
+                pairs=[pair],
+                timerange=tr,
+                data_format="feather",
+            )
+            return data_dict.get(pair)
+        except Exception as exc:
+            logger.warning(f"load_data failed for {pair}: {exc}")
+            return None
 
     @staticmethod
     def compile_strategy(record) -> str:

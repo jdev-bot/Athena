@@ -15,10 +15,11 @@ Templates suit regimes:
   • swing           → all regimes (medium timeframe)
 """
 import logging
-from typing import List, Optional, Dict
+from typing import List, Optional, Dict, Union
 from enum import Enum
 
 import numpy as np
+import pandas as pd
 
 logger = logging.getLogger(__name__)
 
@@ -36,13 +37,15 @@ TEMPLATE_SUITABILITY: Dict[str, List[Regime]] = {
     "trend_following": [Regime.TRENDING_UP, Regime.TRENDING_DOWN],
     "mean_reversion": [Regime.RANGING],
     "breakout": [Regime.VOLATILE, Regime.TRENDING_UP, Regime.TRENDING_DOWN],
+    "momentum": [Regime.TRENDING_UP, Regime.TRENDING_DOWN],
+    "volatility": [Regime.VOLATILE],
     "scalping": list(Regime),  # all
     "swing": list(Regime),      # all
 }
 
 
 def detect_regime(
-    candles: np.ndarray,
+    candles: Union[np.ndarray, pd.DataFrame],
     atr_period: int = 14,
     adx_period: int = 14,
     atr_lookback: int = 30,
@@ -52,14 +55,24 @@ def detect_regime(
 ) -> Regime:
     """Detect market regime from OHLCV candles.
 
-    candles: np.ndarray with shape (N, 6) — [timestamp, open, high, low, close, volume]
+    candles: np.ndarray (N, 6) [timestamp, open, high, low, close, volume]
+             or pd.DataFrame with columns ['open', 'high', 'low', 'close', 'volume']
     """
-    if len(candles) < max(atr_period, adx_period) * 2:
-        return Regime.UNKNOWN
-
-    closes = candles[:, 4].astype(float)
-    highs = candles[:, 2].astype(float)
-    lows = candles[:, 3].astype(float)
+    if isinstance(candles, pd.DataFrame):
+        if candles.empty or len(candles) < max(atr_period, adx_period) * 2:
+            return Regime.UNKNOWN
+        closes = candles['close'].values.astype(float)
+        highs = candles['high'].values.astype(float)
+        lows = candles['low'].values.astype(float)
+    else:
+        candles = np.asarray(candles)
+        if candles.ndim != 2 or candles.shape[1] < 6:
+            return Regime.UNKNOWN
+        if len(candles) < max(atr_period, adx_period) * 2:
+            return Regime.UNKNOWN
+        closes = candles[:, 4].astype(float)
+        highs = candles[:, 2].astype(float)
+        lows = candles[:, 3].astype(float)
 
     # Compute ATR
     atr = _atr(highs, lows, closes, atr_period)
@@ -116,7 +129,6 @@ def detect_regime(
 
     return Regime.UNKNOWN
 
-
 def get_suitable_templates(regime: Regime) -> List[str]:
     """Return templates suitable for a given regime."""
     suitable = []
@@ -124,7 +136,6 @@ def get_suitable_templates(regime: Regime) -> List[str]:
         if regime in regimes:
             suitable.append(template)
     return suitable
-
 
 def _true_range(highs: np.ndarray, lows: np.ndarray, closes: np.ndarray) -> np.ndarray:
     """Compute true range series."""
@@ -135,7 +146,6 @@ def _true_range(highs: np.ndarray, lows: np.ndarray, closes: np.ndarray) -> np.n
     tr3 = np.abs(lows - prev_close)
     return np.maximum(np.maximum(tr1, tr2), tr3)
 
-
 def _atr(highs: np.ndarray, lows: np.ndarray, closes: np.ndarray, period: int) -> np.ndarray:
     """Average True Range."""
     tr = _true_range(highs, lows, closes)
@@ -144,7 +154,6 @@ def _atr(highs: np.ndarray, lows: np.ndarray, closes: np.ndarray, period: int) -
     for i in range(period, len(tr)):
         atr[i] = (atr[i - 1] * (period - 1) + tr[i]) / period
     return atr
-
 
 def _adx(highs: np.ndarray, lows: np.ndarray, closes: np.ndarray, period: int) -> np.ndarray:
     """Average Directional Index."""
@@ -175,7 +184,6 @@ def _adx(highs: np.ndarray, lows: np.ndarray, closes: np.ndarray, period: int) -
     adx = _wilder_smooth(dx, period)
     return adx
 
-
 def _wilder_smooth(series: np.ndarray, period: int) -> np.ndarray:
     """Wilder's smoothing (RMA)."""
     result = np.zeros_like(series)
@@ -183,7 +191,6 @@ def _wilder_smooth(series: np.ndarray, period: int) -> np.ndarray:
     for i in range(period, len(series)):
         result[i] = (result[i - 1] * (period - 1) + series[i]) / period
     return result
-
 
 def _linear_slope(prices: np.ndarray) -> float:
     """Slope of linear regression over prices."""

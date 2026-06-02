@@ -1,7 +1,9 @@
-"""Generator templates for strategy generation."""
+"""Generator templates for strategy generation using Freqtrade native parameters."""
 from typing import Dict, List, Any
 from athena.common.models import DNASpec, StrategyTemplate
 
+
+# ── helpers ──────────────────────────────────────────────────────────
 
 TREND_FOLLOWING_TEMPLATE = """
 # ---------------------------------------
@@ -13,47 +15,61 @@ import numpy as np
 import pandas as pd
 import pandas_ta as ta
 from freqtrade.strategy.interface import IStrategy
+from freqtrade.strategy import IntParameter, DecimalParameter, RealParameter, informative
+from freqtrade.strategy import timeframe_to_minutes
 
 class {class_name}(IStrategy):
     INTERFACE_VERSION = 3
 
     timeframe = '{timeframe}'
-    stoploss = -0.10
+    can_short = False
+    use_exit_signal = True
     trailing_stop = True
     trailing_stop_positive = 0.02
     trailing_stop_positive_offset = 0.04
+    trailing_only_offset_is_reached = True
 
-    can_short = False
-    use_exit_signal = True
-
-    startup_candle_count = {slow_period}
-
-    # ── hyperoptable parameters ─────────────────────────────────────
-    fast_period = {fast_period}
-    slow_period = {slow_period}
-    trend_threshold = {trend_threshold}
-    rsi_period = {rsi_period}
-    rsi_overbought = {rsi_overbought}
-    rsi_oversold = {rsi_oversold}
+    # ── hyperoptable parameters (Freqtrade native) ─────────────────
+    fast_period   = IntParameter(5, 50, default={fast_period}, space="buy")
+    slow_period   = IntParameter(20, 200, default={slow_period}, space="buy")
+    rsi_period    = IntParameter(5, 30, default={rsi_period}, space="buy")
+    rsi_overbought= IntParameter(55, 90, default={rsi_overbought}, space="sell")
+    rsi_oversold  = IntParameter(10, 45, default={rsi_oversold}, space="buy")
 
     # ── position sizing ────────────────────────────────────────────
-    position_size_pct = {position_size_pct}
-    min_stake_usd = {min_stake_usd}
-    max_stake_usd = {max_stake_usd}
-    max_open_trades = {max_open_trades}
-    risk_capital_pct = {risk_capital_pct}
-    reserve_capital_pct = {reserve_capital_pct}
+    position_size_pct = RealParameter(0.05, 0.90, default={position_size_pct}, space="buy")
+    max_open_trades   = IntParameter(1, 10, default={max_open_trades}, space="buy")
+
+    # ── multi-timeframe regime filter (higher TF trend) ──────────────
+    startup_candle_count = {slow_period}
+
+    @informative('4h')
+    def populate_indicators_4h(self, dataframe: pd.DataFrame, metadata: dict) -> pd.DataFrame:
+        dataframe['ema_fast'] = ta.ema(dataframe['close'], length=50)
+        dataframe['ema_slow'] = ta.ema(dataframe['close'], length=200)
+        return dataframe
 
     def populate_indicators(self, dataframe: pd.DataFrame, metadata: dict) -> pd.DataFrame:
-        dataframe['fast'] = ta.ema(dataframe['close'], length=self.fast_period)
-        dataframe['slow'] = ta.ema(dataframe['close'], length=self.slow_period)
-        dataframe['rsi'] = ta.rsi(dataframe['close'], length=self.rsi_period)
-        dataframe['trend_strength'] = np.abs((dataframe['fast'] - dataframe['slow']) / dataframe['slow'])
+        dataframe['fast'] = ta.ema(dataframe['close'], length=self.fast_period.value)
+        dataframe['slow'] = ta.ema(dataframe['close'], length=self.slow_period.value)
+        dataframe['rsi']  = ta.rsi(dataframe['close'], length=self.rsi_period.value)
+        dataframe['trend_strength'] = np.abs(
+            (dataframe['fast'] - dataframe['slow']) / dataframe['slow']
+        )
+        # Regime filter: 4h fast EMA > slow EMA = uptrend
+        pair = metadata['pair']
+        col_fast = pair + "_4h_ema_fast"
+        col_slow = pair + "_4h_ema_slow"
+        if col_fast in dataframe.columns and col_slow in dataframe.columns:
+            dataframe['regime_long'] = dataframe[col_fast] > dataframe[col_slow]
+        else:
+            dataframe['regime_long'] = True
         return dataframe
 
     def populate_entry_trend(self, dataframe: pd.DataFrame, metadata: dict) -> pd.DataFrame:
         dataframe.loc[
-            (dataframe['fast'] > dataframe['slow']),
+            (dataframe['fast'] > dataframe['slow']) &
+            (dataframe['regime_long'].fillna(True)),
             'enter_long'] = 1
         return dataframe
 
@@ -62,43 +78,40 @@ class {class_name}(IStrategy):
         return dataframe
 """
 
+
 MEAN_REVERSION_TEMPLATE = """
 import numpy as np
 import pandas as pd
 import pandas_ta as ta
 from freqtrade.strategy.interface import IStrategy
+from freqtrade.strategy import IntParameter, DecimalParameter, RealParameter
 
 class {class_name}(IStrategy):
     INTERFACE_VERSION = 3
 
     timeframe = '{timeframe}'
-    stoploss = -0.10
-
     can_short = False
     use_exit_signal = True
 
-    startup_candle_count = {mean_period}
-
-    bb_period = {bb_period}
-    bb_std = {bb_std}
-    rsi_period = {rsi_period}
-    rsi_overbought = {rsi_overbought}
-    rsi_oversold = {rsi_oversold}
-    mean_period = {mean_period}
-    deviation_threshold = {deviation_threshold}
+    # ── hyperoptable parameters ─────────────────────────────────────
+    bb_period    = IntParameter(10, 50, default={bb_period}, space="buy")
+    bb_std       = RealParameter(1.0, 3.0, default={bb_std}, space="buy")
+    rsi_period   = IntParameter(5, 30, default={rsi_period}, space="buy")
+    rsi_overbought = IntParameter(55, 90, default={rsi_overbought}, space="sell")
+    rsi_oversold   = IntParameter(10, 45, default={rsi_oversold}, space="buy")
+    mean_period    = IntParameter(10, 100, default={mean_period}, space="buy")
+    deviation_threshold = RealParameter(0.001, 0.05, default={deviation_threshold}, space="buy")
 
     # ── position sizing ────────────────────────────────────────────
-    position_size_pct = {position_size_pct}
-    min_stake_usd = {min_stake_usd}
-    max_stake_usd = {max_stake_usd}
-    max_open_trades = {max_open_trades}
-    risk_capital_pct = {risk_capital_pct}
-    reserve_capital_pct = {reserve_capital_pct}
+    position_size_pct = RealParameter(0.05, 0.90, default={position_size_pct}, space="buy")
+    max_open_trades   = IntParameter(1, 10, default={max_open_trades}, space="buy")
 
     def populate_indicators(self, dataframe: pd.DataFrame, metadata: dict) -> pd.DataFrame:
-        dataframe['sma'] = ta.sma(dataframe['close'], length=self.mean_period)
-        dataframe['rsi'] = ta.rsi(dataframe['close'], length=self.rsi_period)
-        bband = ta.bbands(dataframe['close'], length=self.bb_period, std=self.bb_std)
+        dataframe['sma'] = ta.sma(dataframe['close'], length=self.mean_period.value)
+        dataframe['rsi'] = ta.rsi(dataframe['close'], length=self.rsi_period.value)
+        bband = ta.bbands(dataframe['close'],
+                          length=self.bb_period.value,
+                          std=self.bb_std.value)
         dataframe = dataframe.join(bband)
         return dataframe
 
@@ -106,8 +119,8 @@ class {class_name}(IStrategy):
         dev = (dataframe['sma'] - dataframe['close']) / dataframe['sma']
         dataframe.loc[
             (dataframe['close'] < dataframe['sma']) &
-            (dataframe['rsi'] < self.rsi_oversold) &
-            (dev > self.deviation_threshold),
+            (dataframe['rsi'] < self.rsi_oversold.value) &
+            (dev > self.deviation_threshold.value),
             'enter_long'] = 1
         return dataframe
 
@@ -116,180 +129,175 @@ class {class_name}(IStrategy):
         return dataframe
 """
 
+
 BREAKOUT_TEMPLATE = """
 import numpy as np
 import pandas as pd
 import pandas_ta as ta
 from freqtrade.strategy.interface import IStrategy
+from freqtrade.strategy import IntParameter, DecimalParameter, RealParameter
 
 class {class_name}(IStrategy):
     INTERFACE_VERSION = 3
 
     timeframe = '{timeframe}'
-    stoploss = -0.10
-
     can_short = False
     use_exit_signal = True
 
-    startup_candle_count = {lookback}
-
-    lookback = {lookback}
-    atr_period = {atr_period}
-    atr_multiplier = {atr_multiplier}
+    # ── hyperoptable parameters ─────────────────────────────────────
+    lookback      = IntParameter(10, 100, default={lookback}, space="buy")
+    atr_period    = IntParameter(5, 30, default={atr_period}, space="buy")
+    atr_multiplier= RealParameter(0.5, 3.0, default={atr_multiplier}, space="sell")
 
     # ── position sizing ────────────────────────────────────────────
-    position_size_pct = {position_size_pct}
-    min_stake_usd = {min_stake_usd}
-    max_stake_usd = {max_stake_usd}
-    max_open_trades = {max_open_trades}
-    risk_capital_pct = {risk_capital_pct}
-    reserve_capital_pct = {reserve_capital_pct}
+    position_size_pct = RealParameter(0.05, 0.90, default={position_size_pct}, space="buy")
+    max_open_trades   = IntParameter(1, 10, default={max_open_trades}, space="buy")
 
     def populate_indicators(self, dataframe: pd.DataFrame, metadata: dict) -> pd.DataFrame:
-        dataframe['high_max'] = dataframe['high'].rolling(window=self.lookback).max()
-        dataframe['low_min'] = dataframe['low'].rolling(window=self.lookback).min()
-        dataframe['atr'] = ta.atr(dataframe['high'], dataframe['low'], dataframe['close'], length=self.atr_period)
+        dataframe['high_max'] = dataframe['high'].rolling(
+            window=self.lookback.value).max()
+        dataframe['low_min'] = dataframe['low'].rolling(
+            window=self.lookback.value).min()
+        dataframe['atr'] = ta.atr(dataframe['high'], dataframe['low'],
+                                   dataframe['close'], length=self.atr_period.value)
         return dataframe
 
     def populate_entry_trend(self, dataframe: pd.DataFrame, metadata: dict) -> pd.DataFrame:
         dataframe.loc[
-            (dataframe['close'] > dataframe['high_max'].shift(1)),
+            dataframe['close'] > dataframe['high_max'].shift(1),
             'enter_long'] = 1
         return dataframe
 
     def populate_exit_trend(self, dataframe: pd.DataFrame, metadata: dict) -> pd.DataFrame:
         dataframe.loc[
-            dataframe['close'] < dataframe['high_max'].shift(1) - dataframe['atr'] * self.atr_multiplier,
+            dataframe['close'] < dataframe['high_max'].shift(1) -
+            dataframe['atr'] * self.atr_multiplier.value,
             'exit_long'] = 1
         return dataframe
 """
+
 
 MOMENTUM_TEMPLATE = """
 import numpy as np
 import pandas as pd
 import pandas_ta as ta
 from freqtrade.strategy.interface import IStrategy
+from freqtrade.strategy import IntParameter, DecimalParameter, RealParameter
 
 class {class_name}(IStrategy):
     INTERFACE_VERSION = 3
 
     timeframe = '{timeframe}'
-    stoploss = -0.10
-
     can_short = False
     use_exit_signal = True
 
-    startup_candle_count = {signal_period}
-
-    momentum_period = {momentum_period}
-    signal_period = {signal_period}
-    momentum_threshold = {momentum_threshold}
-    rsi_period = {rsi_period}
+    # ── hyperoptable parameters ─────────────────────────────────────
+    momentum_period   = IntParameter(5, 50, default={momentum_period}, space="buy")
+    signal_period     = IntParameter(5, 30, default={signal_period}, space="buy")
+    momentum_threshold= RealParameter(0.1, 5.0, default={momentum_threshold}, space="buy")
+    rsi_period        = IntParameter(2, 30, default={rsi_period}, space="buy")
 
     # ── position sizing ────────────────────────────────────────────
-    position_size_pct = {position_size_pct}
-    min_stake_usd = {min_stake_usd}
-    max_stake_usd = {max_stake_usd}
-    max_open_trades = {max_open_trades}
-    risk_capital_pct = {risk_capital_pct}
-    reserve_capital_pct = {reserve_capital_pct}
+    position_size_pct = RealParameter(0.02, 0.50, default={position_size_pct}, space="buy")
+    max_open_trades   = IntParameter(1, 5, default={max_open_trades}, space="buy")
 
     def populate_indicators(self, dataframe: pd.DataFrame, metadata: dict) -> pd.DataFrame:
-        dataframe['rsi'] = ta.rsi(dataframe['close'], length=self.rsi_period)
-        macd = ta.macd(dataframe['close'], fast=12, slow=26, signal=self.signal_period)
+        dataframe['rsi'] = ta.rsi(dataframe['close'], length=self.rsi_period.value)
+        macd = ta.macd(dataframe['close'], fast=12, slow=26, signal=self.signal_period.value)
         dataframe = dataframe.join(macd)
-        dataframe['momentum'] = dataframe['MACD_12_26_9'] - dataframe['MACDs_12_26_9']
+        col_macd = f'MACD_12_26_{self.signal_period.value}'
+        col_sig  = f'MACDs_12_26_{self.signal_period.value}'
+        if col_macd in dataframe.columns and col_sig in dataframe.columns:
+            dataframe['momentum'] = dataframe[col_macd] - dataframe[col_sig]
         return dataframe
 
     def populate_entry_trend(self, dataframe: pd.DataFrame, metadata: dict) -> pd.DataFrame:
         dataframe.loc[
-            (dataframe['momentum'] > self.momentum_threshold) &
+            (dataframe['momentum'] > self.momentum_threshold.value) &
             (dataframe['rsi'] < 70),
             'enter_long'] = 1
         return dataframe
 
     def populate_exit_trend(self, dataframe: pd.DataFrame, metadata: dict) -> pd.DataFrame:
         dataframe.loc[
-            (dataframe['momentum'] < -self.momentum_threshold * 0.5),
+            dataframe['momentum'] < -self.momentum_threshold.value * 0.5,
             'exit_long'] = 1
         return dataframe
 """
+
 
 VOLATILITY_TEMPLATE = """
 import numpy as np
 import pandas as pd
 import pandas_ta as ta
 from freqtrade.strategy.interface import IStrategy
+from freqtrade.strategy import IntParameter, DecimalParameter, RealParameter
+from freqtrade.strategy import stoploss_from_open
 
 class {class_name}(IStrategy):
     INTERFACE_VERSION = 3
 
     timeframe = '{timeframe}'
-    stoploss = -0.10
-
     can_short = False
     use_exit_signal = True
 
-    startup_candle_count = {atr_period}
-
-    atr_period = {atr_period}
-    volatility_threshold = {volatility_threshold}
-    tp_multiplier = {tp_multiplier}
-    sl_multiplier = {sl_multiplier}
-
-    trailing_stop = True
-    trailing_stop_positive = 0.01
-    trailing_stop_positive_offset = 0.02
+    # ── hyperoptable parameters ─────────────────────────────────────
+    atr_period       = IntParameter(5, 30, default={atr_period}, space="buy")
+    volatility_threshold = RealParameter(0.005, 0.10, default={volatility_threshold}, space="buy")
+    tp_multiplier    = RealParameter(1.0, 5.0, default={tp_multiplier}, space="sell")
+    sl_atr_mult      = RealParameter(1.0, 4.0, default={sl_multiplier}, space="sell")
 
     # ── position sizing ────────────────────────────────────────────
-    position_size_pct = {position_size_pct}
-    min_stake_usd = {min_stake_usd}
-    max_stake_usd = {max_stake_usd}
-    max_open_trades = {max_open_trades}
-    risk_capital_pct = {risk_capital_pct}
-    reserve_capital_pct = {reserve_capital_pct}
+    position_size_pct = RealParameter(0.02, 0.50, default={position_size_pct}, space="buy")
+    max_open_trades   = IntParameter(1, 5, default={max_open_trades}, space="buy")
 
     def populate_indicators(self, dataframe: pd.DataFrame, metadata: dict) -> pd.DataFrame:
-        dataframe['atr'] = ta.atr(dataframe['high'], dataframe['low'], dataframe['close'], length=self.atr_period)
-        dataframe['volatility'] = dataframe['atr'] / dataframe['close']
+        dataframe['atr'] = ta.atr(dataframe['high'], dataframe['low'],
+                                   dataframe['close'], length=self.atr_period.value)
+        dataframe['atr_pct'] = dataframe['atr'] / dataframe['close']
+        dataframe['volatility'] = dataframe['atr_pct']
         return dataframe
 
     def populate_entry_trend(self, dataframe: pd.DataFrame, metadata: dict) -> pd.DataFrame:
         dataframe.loc[
-            dataframe['volatility'] > self.volatility_threshold,
+            dataframe['volatility'] > self.volatility_threshold.value,
             'enter_long'] = 1
         return dataframe
 
     def populate_exit_trend(self, dataframe: pd.DataFrame, metadata: dict) -> pd.DataFrame:
         dataframe.loc[
-            dataframe['close'] > dataframe['close'].shift(1) * (1 + self.volatility * self.tp_multiplier),
+            dataframe['close'] > dataframe['close'].shift(1) *
+            (1 + dataframe['volatility'] * self.tp_multiplier.value),
             'exit_long'] = 1
         return dataframe
+
+    # ── dynamic stoploss via Freqtrade helper ──────────────────────
+    def custom_stoploss(self, pair, trade, current_time, current_rate,
+                        current_profit, **kwargs):
+        atr_pct = getattr(self, '_last_atr_pct', 0.02)
+        sl = -abs(self.sl_atr_mult.value * atr_pct)
+        return stoploss_from_open(sl, current_profit, is_short=trade.is_short)
 """
+
 
 TEMPLATE_MAP = {
     StrategyTemplate.TREND_FOLLOWING: TREND_FOLLOWING_TEMPLATE,
-    StrategyTemplate.MEAN_REVERSION: MEAN_REVERSION_TEMPLATE,
-    StrategyTemplate.BREAKOUT: BREAKOUT_TEMPLATE,
-    StrategyTemplate.MOMENTUM: MOMENTUM_TEMPLATE,
-    StrategyTemplate.VOLATILITY: VOLATILITY_TEMPLATE,
+    StrategyTemplate.MEAN_REVERSION:  MEAN_REVERSION_TEMPLATE,
+    StrategyTemplate.BREAKOUT:         BREAKOUT_TEMPLATE,
+    StrategyTemplate.MOMENTUM:          MOMENTUM_TEMPLATE,
+    StrategyTemplate.VOLATILITY:         VOLATILITY_TEMPLATE,
 }
 
-# DNA specifications for each template
+# ── DNA specifications ─────────────────────────────────────────────
 TEMPLATE_SPECS: Dict[StrategyTemplate, List[DNASpec]] = {
     StrategyTemplate.TREND_FOLLOWING: [
         DNASpec(name="fast_period", type="int", min=5, max=50, default=8),
         DNASpec(name="slow_period", type="int", min=20, max=200, default=21),
-        DNASpec(name="trend_threshold", type="float", min=0.0, max=0.02, default=0.005),
         DNASpec(name="rsi_period", type="int", min=5, max=30, default=14),
         DNASpec(name="rsi_overbought", type="int", min=55, max=90, default=70),
         DNASpec(name="rsi_oversold", type="int", min=10, max=45, default=30),
         DNASpec(name="position_size_pct", type="float", min=0.05, max=0.90, default=0.20),
-        DNASpec(name="min_stake_usd", type="float", min=5.0, max=50.0, default=5.0),
-        DNASpec(name="max_stake_usd", type="float", min=20.0, max=500.0, default=100.0),
         DNASpec(name="max_open_trades", type="int", min=1, max=10, default=1),
-        DNASpec(name="risk_capital_pct", type="float", min=0.10, max=0.90, default=0.50),
-        DNASpec(name="reserve_capital_pct", type="float", min=0.02, max=0.50, default=0.10),
     ],
     StrategyTemplate.MEAN_REVERSION: [
         DNASpec(name="bb_period", type="int", min=10, max=50, default=20),
@@ -300,46 +308,29 @@ TEMPLATE_SPECS: Dict[StrategyTemplate, List[DNASpec]] = {
         DNASpec(name="mean_period", type="int", min=10, max=100, default=50),
         DNASpec(name="deviation_threshold", type="float", min=0.001, max=0.05, default=0.01),
         DNASpec(name="position_size_pct", type="float", min=0.05, max=0.90, default=0.10),
-        DNASpec(name="min_stake_usd", type="float", min=5.0, max=50.0, default=5.0),
-        DNASpec(name="max_stake_usd", type="float", min=20.0, max=500.0, default=100.0),
         DNASpec(name="max_open_trades", type="int", min=1, max=10, default=1),
-        DNASpec(name="risk_capital_pct", type="float", min=0.10, max=0.80, default=0.50),
-        DNASpec(name="reserve_capital_pct", type="float", min=0.05, max=0.30, default=0.10),
     ],
     StrategyTemplate.BREAKOUT: [
         DNASpec(name="lookback", type="int", min=10, max=100, default=20),
         DNASpec(name="atr_period", type="int", min=5, max=30, default=14),
         DNASpec(name="atr_multiplier", type="float", min=0.5, max=3.0, default=1.5),
-        DNASpec(name="volume_factor", type="float", min=1.0, max=5.0, default=2.0),
         DNASpec(name="position_size_pct", type="float", min=0.05, max=0.90, default=0.10),
-        DNASpec(name="min_stake_usd", type="float", min=5.0, max=50.0, default=5.0),
-        DNASpec(name="max_stake_usd", type="float", min=20.0, max=500.0, default=100.0),
         DNASpec(name="max_open_trades", type="int", min=1, max=10, default=1),
-        DNASpec(name="risk_capital_pct", type="float", min=0.10, max=0.80, default=0.50),
-        DNASpec(name="reserve_capital_pct", type="float", min=0.05, max=0.30, default=0.10),
     ],
     StrategyTemplate.MOMENTUM: [
         DNASpec(name="momentum_period", type="int", min=5, max=50, default=10),
         DNASpec(name="signal_period", type="int", min=5, max=30, default=9),
         DNASpec(name="momentum_threshold", type="float", min=0.1, max=5.0, default=1.0),
-        DNASpec(name="rsi_period", type="int", min=5, max=30, default=14),
+        DNASpec(name="rsi_period", type="int", min=2, max=30, default=14),
         DNASpec(name="position_size_pct", type="float", min=0.02, max=0.50, default=0.10),
-        DNASpec(name="min_stake_usd", type="float", min=5.0, max=50.0, default=5.0),
-        DNASpec(name="max_stake_usd", type="float", min=20.0, max=500.0, default=100.0),
         DNASpec(name="max_open_trades", type="int", min=1, max=5, default=1),
-        DNASpec(name="risk_capital_pct", type="float", min=0.10, max=0.80, default=0.50),
-        DNASpec(name="reserve_capital_pct", type="float", min=0.05, max=0.30, default=0.10),
     ],
     StrategyTemplate.VOLATILITY: [
         DNASpec(name="atr_period", type="int", min=5, max=30, default=14),
-        DNASpec(name="volatility_threshold", type="float", min=0.005, max=0.1, default=0.02),
-        DNASpec(name="position_size_pct", type="float", min=0.02, max=0.50, default=0.10),
-        DNASpec(name="min_stake_usd", type="float", min=5.0, max=50.0, default=5.0),
-        DNASpec(name="max_stake_usd", type="float", min=20.0, max=500.0, default=100.0),
-        DNASpec(name="max_open_trades", type="int", min=1, max=5, default=1),
-        DNASpec(name="risk_capital_pct", type="float", min=0.10, max=0.80, default=0.50),
-        DNASpec(name="reserve_capital_pct", type="float", min=0.05, max=0.30, default=0.10),
+        DNASpec(name="volatility_threshold", type="float", min=0.005, max=0.10, default=0.02),
         DNASpec(name="tp_multiplier", type="float", min=1.0, max=5.0, default=2.0),
         DNASpec(name="sl_multiplier", type="float", min=0.5, max=3.0, default=1.5),
+        DNASpec(name="position_size_pct", type="float", min=0.02, max=0.50, default=0.10),
+        DNASpec(name="max_open_trades", type="int", min=1, max=5, default=1),
     ],
 }

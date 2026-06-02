@@ -311,6 +311,9 @@ class AthenaEngine:
             record = finisher.run(record)
             # widen neighbor search space for future GA generations
             finisher.expand_ranges(record, factor=0.20)
+            # snapshot optimized DNA
+            from athena.core.dna_versioning import snapshot_dna
+            snapshot_dna(record.id, record.dna.vector, source="hyperopt")
             self._persist(record)
         except Exception as exc:
             logger.warning(f"Hyperopt finisher failed for {record.id}: {exc}")

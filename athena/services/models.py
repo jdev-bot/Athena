@@ -119,6 +119,20 @@ class Signal(Base):
     __table_args__ = (Index("ix_signals_strategy", "strategy_id", "timestamp"),)
 
 
+class DnaSnapshot(Base):
+    """Immutable versioned snapshots of strategy DNA vectors."""
+    __tablename__ = "dna_snapshots"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    strategy_id = Column(String, nullable=False, index=True)
+    version = Column(Integer, nullable=False)          # 1 = initial, 2+, ...
+    dna_vector = Column(JSON, nullable=False)
+    source = Column(String, default="manual")            # "promotion", "hyperopt", "manual", "drift_restart"
+    created_at = Column(DateTime, default=_utcnow)
+
+    __table_args__ = (Index("ix_dna_snapshot_strategy", "strategy_id", "version"),)
+
+
 # Setup
 _DB_ENGINE = None
 

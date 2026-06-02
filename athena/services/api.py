@@ -771,6 +771,37 @@ async def forward_pnl(strategy_id: str, symbol: Optional[str] = None):
 
 
 
+# ── DNA versioning ─────────────────────────────────────────────────
+from athena.core.dna_versioning import snapshot_dna, restore_dna, list_snapshots  # noqa: E402
+
+
+@app.post("/dna/snapshot")
+async def dna_snapshot_endpoint(strategy_id: str, source: str = "manual"):
+    """Persist current strategy DNA as a new versioned snapshot."""
+    session = get_session()
+    row = session.query(StrategyModel).filter_by(id=strategy_id).first()
+    if not row:
+        raise HTTPException(status_code=404, detail="Strategy not found")
+    version = snapshot_dna(strategy_id, row.dna, source=source)
+    return {"strategy_id": strategy_id, "version": version, "source": source}
+
+
+@app.get("/dna/versions")
+async def dna_versions(strategy_id: str):
+    """List all DNA versions for a strategy."""
+    versions = list_snapshots(strategy_id)
+    return {"strategy_id": strategy_id, "versions": versions}
+
+
+@app.get("/dna/restore")
+async def dna_restore(strategy_id: str, version: int):
+    """Return a specific DNA vector version."""
+    vec = restore_dna(strategy_id, version=version)
+    if vec is None:
+        raise HTTPException(status_code=404, detail="Version not found")
+    return {"strategy_id": strategy_id, "version": version, "dna": vec}
+
+
 # ── telemetry ──────────────────────────────────────────────────────
 @app.get("/metrics")
 async def metrics():

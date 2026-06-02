@@ -93,6 +93,7 @@ class AthenaEngine:
             crossover_rate=self.cfg.crossover_rate,
             elitism_count=self.cfg.elitism_count,
             allowed_templates=allowed_templates,
+            ml_seed_ratio=getattr(self.cfg, 'ml_seed_ratio', 0.0),
         )
         ga.initialize_population()
 

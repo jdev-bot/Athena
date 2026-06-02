@@ -115,6 +115,7 @@ class GenerationConfig(BaseModel):
     crossover_rate: float = 0.7
     elitism_count: int = 3
     ml_boost: bool = True
+    ml_seed_ratio: float = 0.0
     parallel_workers: int = 4
 
 

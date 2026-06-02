@@ -283,24 +283,36 @@ class AdaptiveLoop:
     async def _handle_degradation(
         self, session_id: str, latest: LiveSnapshot, aggressive: bool = True
     ):
-        """Stop current bot, run mini-GA from current champion, start new winner."""
+        """Stop current bot, demote strategy, run mini-GA, optionally restart."""
         strategy_id = latest.strategy_id
 
         # 1. Stop current bot
-        self.collector.manager.stop(session_id, reason=f"degraded_{latest.is_degraded}")
+        try:
+            await self.collector.manager.stop(session_id, reason=f"degraded_{latest.is_degraded}")
+        except Exception as exc:
+            logger.warning(f"Failed to stop session {session_id}: {exc}")
+
+        # 2. Demote strategy to RETIRED
+        await self._demote_strategy(strategy_id, latest.is_degraded)
+
+        # 3. Trigger portfolio kill-switch if severe
+        if latest.is_degraded == "severe":
+            await self._trigger_portfolio_kill(strategy_id, session_id)
+
         await asyncio.sleep(2)
 
-        # 2. Load current champion DNA from DB
+        # 4. Load current champion DNA from DB
         sess = get_session()
         strategy_row = sess.query(StrategyModel).filter_by(id=strategy_id).first()
         sess.close()
         if not strategy_row:
+            logger.warning(f"Strategy {strategy_id} not found; cannot re-optimize")
             return
 
         dna_vector = strategy_row.dna.get("vector", {}) if isinstance(strategy_row.dna, dict) else {}
         template = StrategyTemplate(strategy_row.template)
 
-        # 3. Mini-GA: seed from current champion + elevated mutation
+        # 5. Mini-GA: seed from current champion + elevated mutation
         from athena.generator.ga_engine import GAEngine
         from athena.generator.dna import DNAEncoder
 
@@ -334,7 +346,7 @@ class AdaptiveLoop:
         population = ga.evolve(fitness_fn)
         best = population[0]
 
-        # 4. Save new strategy
+        # 6. Save new strategy
         new_record = StrategyRecord(
             id=f"strat_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}",
             name=f"adaptive_{template.value}",
@@ -344,9 +356,43 @@ class AdaptiveLoop:
         )
         engine._persist(new_record)
 
-        # 5. If aggressive, auto-launch the new winner in paper mode
+        # 7. If aggressive, auto-launch the new winner in paper mode
         if aggressive:
             await self._launch_new_best(new_record, session_id)
+
+    async def _demote_strategy(self, strategy_id: str, reason: str):
+        """Demote strategy to RETIRED and log the event."""
+        sess = get_session()
+        row = sess.query(StrategyModel).filter_by(id=strategy_id).first()
+        if row:
+            old_status = row.status
+            row.status = StrategyStatus.RETIRED.value
+            row.updated_at = datetime.now(timezone.utc)
+            # Log in metadata
+            meta = json.loads(row.metadata_json or "{}")
+            meta["demotion"] = {
+                "reason": reason,
+                "demoted_at": datetime.now(timezone.utc).isoformat(),
+                "old_status": old_status,
+            }
+            row.metadata_json = json.dumps(meta)
+            sess.commit()
+            logger.warning(f"Strategy {strategy_id} demoted from {old_status} to RETIRED ({reason})")
+        sess.close()
+
+    async def _trigger_portfolio_kill(self, strategy_id: str, session_id: str):
+        """Kill portfolio positions if severe drift detected."""
+        try:
+            from athena.portfolio.manager import PortfolioManager
+            mgr = PortfolioManager()
+            # Check if strategy is in portfolio
+            if strategy_id in mgr._positions:
+                logger.critical(f"SEVERE DRIFT on {strategy_id} — triggering portfolio kill")
+                mgr.kill_all(reason=f"severe_drift_{strategy_id}")
+            else:
+                logger.warning(f"Severe drift on {strategy_id} but not in portfolio; no portfolio action")
+        except Exception as exc:
+            logger.error(f"Portfolio kill failed: {exc}")
 
     async def _launch_new_best(self, record: StrategyRecord, old_session_id: str):
         """Start a new bot with the adapted strategy."""

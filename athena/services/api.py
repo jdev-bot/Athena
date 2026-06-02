@@ -413,6 +413,61 @@ async def portfolio_kill(reason: str = "manual_kill"):
     return {"status": "killed", "reason": reason}
 
 
+# ── drift monitoring endpoints ─────────────────────────────────────
+from athena.live.feedback import FeedbackCollector  # noqa: E402
+from athena.services.models import LiveSnapshot  # noqa: E402
+
+
+@app.get("/drift/status")
+async def drift_status(session_id: str):
+    """Get latest drift classification for a live session."""
+    collector = FeedbackCollector()
+    snaps = collector.get_recent_snapshots(session_id, limit=1)
+    if not snaps:
+        raise HTTPException(status_code=404, detail="No snapshots for session")
+    latest = snaps[0]
+    return {
+        "session_id": session_id,
+        "strategy_id": latest.strategy_id,
+        "timestamp": latest.timestamp.isoformat(),
+        "is_degraded": latest.is_degraded,
+        "live_sharpe": latest.sharpe_estimate,
+        "live_drawdown": latest.max_drawdown,
+        "backtest_sharpe": latest.backtest_sharpe,
+        "backtest_drawdown": latest.backtest_max_drawdown,
+        "sharpe_ratio": latest.sharpe_ratio,
+        "drawdown_ratio": latest.drawdown_ratio,
+    }
+
+
+@app.get("/drift/history")
+async def drift_history(session_id: str, limit: int = 50):
+    """Get recent drift snapshots for a session."""
+    collector = FeedbackCollector()
+    snaps = collector.get_recent_snapshots(session_id, limit=limit)
+    return [
+        {
+            "timestamp": s.timestamp.isoformat(),
+            "is_degraded": s.is_degraded,
+            "equity": s.equity,
+            "sharpe_estimate": s.sharpe_estimate,
+            "max_drawdown": s.max_drawdown,
+            "sharpe_ratio": s.sharpe_ratio,
+            "drawdown_ratio": s.drawdown_ratio,
+        }
+        for s in snaps
+    ]
+
+
+@app.post("/drift/demote")
+async def drift_demote(strategy_id: str, reason: str = "manual"):
+    """Manually demote a strategy (emergency stop + demote)."""
+    from athena.live.feedback import AdaptiveLoop
+    loop = AdaptiveLoop()
+    await loop._demote_strategy(strategy_id, reason)
+    return {"strategy_id": strategy_id, "status": "demoted", "reason": reason}
+
+
 # ── scheduler control ──────────────────────────────────────────────
 from athena.live.scheduler import get_scheduler  # noqa: E402
 

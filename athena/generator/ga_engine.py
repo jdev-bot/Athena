@@ -188,7 +188,8 @@ class GAEngine:
                     child_template = parent1.template
                 else:
                     # Different templates — pick one at random, skip DNA crossover
-                    child_template = self._rng.choice([parent1.template, parent2.template])
+                    idx = self._rng.integers(0, 2)
+                    child_template = [parent1.template, parent2.template][int(idx)]
 
                 if random.random() < self.crossover_rate and parent1.template == parent2.template:
                     child1_dna, child2_dna = self.encoder.crossover(

@@ -130,7 +130,8 @@ class PortfolioPosition(BaseModel):
     sharpe_30d: float = 0.0                         # rolling 30-day Sharpe
     correlation_to_portfolio: float = 0.0             # correlation with rest of book
     status: str = "active"                            # active, paused, stopped
-    started_at: datetime = Field(default_factory=datetime.utcnow)
+    is_paused: bool = False                           # True if manually paused
+    started_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     last_rebalanced_at: Optional[datetime] = None
 
 

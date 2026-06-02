@@ -67,5 +67,12 @@ class DNAEncoder:
         return child1, child2
     
     def to_strategy_params(self, dna: Dict[str, Any], template: StrategyTemplate) -> Dict[str, Any]:
-        """Convert DNA to strategy constructor parameters."""
-        return dict(dna)
+        """Convert DNA to strategy constructor parameters.
+
+        Merges with spec defaults so cross-template individuals don't
+        trigger KeyError during template formatting.
+        """
+        spec = self.get_spec(template)
+        params = {s.name: s.default for s in spec}
+        params.update(dna)
+        return params

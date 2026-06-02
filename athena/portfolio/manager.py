@@ -8,6 +8,7 @@ Manages a basket of PROMOTED strategies as a single portfolio with:
   • Automatic rebalancing
 """
 import uuid
+import json
 import logging
 from datetime import datetime, timezone, timedelta
 from typing import Dict, List, Optional, Tuple
@@ -90,10 +91,17 @@ class PortfolioManager:
         session = get_session()
         row = session.query(StrategyModel).filter_by(id=strategy_id).first()
         if row:
-            meta = row.metadata_json or {}
+            meta_raw = row.metadata_json or "{}"
+            if isinstance(meta_raw, str):
+                try:
+                    meta = json.loads(meta_raw)
+                except json.JSONDecodeError:
+                    meta = {}
+            else:
+                meta = meta_raw or {}
             meta["portfolio_removed_at"] = _utcnow().isoformat()
             meta["portfolio_remove_reason"] = reason
-            row.metadata_json = meta
+            row.metadata_json = json.dumps(meta)
             session.commit()
         logger.info(f"Removed {strategy_id} from portfolio ({reason})")
 
@@ -396,9 +404,16 @@ class PortfolioManager:
         row = session.query(StrategyModel).filter_by(id=pos.strategy_id).first()
         if not row:
             return
-        meta = row.metadata_json or {}
+        meta_raw = row.metadata_json or "{}"
+        if isinstance(meta_raw, str):
+            try:
+                meta = json.loads(meta_raw)
+            except json.JSONDecodeError:
+                meta = {}
+        else:
+            meta = meta_raw or {}
         meta["portfolio"] = pos.model_dump(mode="json")
-        row.metadata_json = meta
+        row.metadata_json = json.dumps(meta)
         session.commit()
 
     def _load_from_db(self) -> None:
@@ -410,7 +425,14 @@ class PortfolioManager:
             .all()
         )
         for row in promoted:
-            meta = row.metadata_json or {}
+            meta_raw = row.metadata_json or "{}"
+            if isinstance(meta_raw, str):
+                try:
+                    meta = json.loads(meta_raw)
+                except json.JSONDecodeError:
+                    meta = {}
+            else:
+                meta = meta_raw or {}
             pmeta = meta.get("portfolio")
             if pmeta:
                 try:

@@ -99,8 +99,10 @@ class FakePredictor:
         self.is_trained = True
 
     def generate_promising_candidates(self, template, n_candidates=10):
-        # Return deterministic DNA vectors
-        return [{"fast_period": 42, "slow_period": 55, "atr_period": 12} for _ in range(n_candidates)]
+        from athena.generator.dna import DNAEncoder
+        encoder = DNAEncoder()
+        # Return valid random DNA for the template
+        return [encoder.random_dna(template) for _ in range(n_candidates)]
 
 
 def test_ml_seeding_during_evolution():

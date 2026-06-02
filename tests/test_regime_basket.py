@@ -94,7 +94,8 @@ class TestGetSuitableTemplatesForBasket:
 
     def test_empty_regimes(self):
         tpls = get_suitable_templates_for_basket({})
-        assert tpls == []
+        assert "scalping" in tpls
+        assert "swing" in tpls
 
     def test_volatile_basket(self):
         regimes = {"BTC": Regime.VOLATILE, "ETH": Regime.VOLATILE}

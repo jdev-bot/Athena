@@ -309,6 +309,8 @@ class AthenaEngine:
             from athena.core.hyperopt import HyperoptFinisher
             finisher = HyperoptFinisher(epochs=15, loss_function="SharpeHyperOptLoss")
             record = finisher.run(record)
+            # widen neighbor search space for future GA generations
+            finisher.expand_ranges(record, factor=0.20)
             self._persist(record)
         except Exception as exc:
             logger.warning(f"Hyperopt finisher failed for {record.id}: {exc}")

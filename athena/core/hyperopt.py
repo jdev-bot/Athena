@@ -246,6 +246,38 @@ class HyperoptFinisher:
                 logger.info("Hyperopt param update: %s %s -> %s", key, old, val)
         return record
 
+    @staticmethod
+    def expand_ranges(record: StrategyRecord, factor: float = 0.20) -> StrategyRecord:
+        """Widen DNA spec bounds around optimized values so future GA explores neighbors.
+
+        factor: fraction of current value to add/subtract from min/max.
+                e.g. 0.20 means new range = [val * 0.8, val * 1.2]
+        """
+        if not record.dna.spec:
+            # Load spec from template if missing
+            from athena.generator.templates import TEMPLATE_SPECS
+            record.dna.spec = list(TEMPLATE_SPECS.get(record.dna.template, []))
+        for s in record.dna.spec:
+            if s.type not in ("int", "float"):
+                continue
+            val = record.dna.vector.get(s.name)
+            if val is None:
+                continue
+            span = max(abs(val) * factor, 1 if s.type == "int" else 0.01)
+            if s.min is not None:
+                s.min = min(s.min, val - span)
+            if s.max is not None:
+                s.max = max(s.max, val + span)
+            # Clamp to reasonable floors
+            if s.type == "int":
+                s.min = int(max(s.min, 2))
+                s.max = int(max(s.max, s.min + 1))
+            logger.info(
+                "Expanded range for %s: %s -> [%s, %s]",
+                s.name, val, s.min, s.max,
+            )
+        return record
+
 
 # ── util ──────────────────────────────────────────
 

@@ -129,6 +129,25 @@ def detect_regime(
 
     return Regime.UNKNOWN
 
+
+def detect_regimes(
+    pairs_dfs: Dict[str, Union[np.ndarray, pd.DataFrame]],
+    **kwargs,
+) -> Dict[str, Regime]:
+    """Detect regime for each pair in a basket."""
+    return {pair: detect_regime(df, **kwargs) for pair, df in pairs_dfs.items()}
+
+
+def get_dominant_regime(regimes: Dict[str, Regime]) -> Regime:
+    """Return the most common regime across a basket."""
+    if not regimes:
+        return Regime.UNKNOWN
+    counts = {}
+    for r in regimes.values():
+        counts[r] = counts.get(r, 0) + 1
+    return max(counts, key=counts.get)
+
+
 def get_suitable_templates(regime: Regime) -> List[str]:
     """Return templates suitable for a given regime."""
     suitable = []
@@ -136,6 +155,13 @@ def get_suitable_templates(regime: Regime) -> List[str]:
         if regime in regimes:
             suitable.append(template)
     return suitable
+
+
+def get_suitable_templates_for_basket(regimes: Dict[str, Regime]) -> List[str]:
+    """Return templates suitable for the dominant regime in a basket."""
+    dominant = get_dominant_regime(regimes)
+    return get_suitable_templates(dominant)
+
 
 def _true_range(highs: np.ndarray, lows: np.ndarray, closes: np.ndarray) -> np.ndarray:
     """Compute true range series."""
@@ -146,6 +172,7 @@ def _true_range(highs: np.ndarray, lows: np.ndarray, closes: np.ndarray) -> np.n
     tr3 = np.abs(lows - prev_close)
     return np.maximum(np.maximum(tr1, tr2), tr3)
 
+
 def _atr(highs: np.ndarray, lows: np.ndarray, closes: np.ndarray, period: int) -> np.ndarray:
     """Average True Range."""
     tr = _true_range(highs, lows, closes)
@@ -154,6 +181,7 @@ def _atr(highs: np.ndarray, lows: np.ndarray, closes: np.ndarray, period: int) -
     for i in range(period, len(tr)):
         atr[i] = (atr[i - 1] * (period - 1) + tr[i]) / period
     return atr
+
 
 def _adx(highs: np.ndarray, lows: np.ndarray, closes: np.ndarray, period: int) -> np.ndarray:
     """Average Directional Index."""
@@ -184,6 +212,7 @@ def _adx(highs: np.ndarray, lows: np.ndarray, closes: np.ndarray, period: int) -
     adx = _wilder_smooth(dx, period)
     return adx
 
+
 def _wilder_smooth(series: np.ndarray, period: int) -> np.ndarray:
     """Wilder's smoothing (RMA)."""
     result = np.zeros_like(series)
@@ -191,6 +220,7 @@ def _wilder_smooth(series: np.ndarray, period: int) -> np.ndarray:
     for i in range(period, len(series)):
         result[i] = (result[i - 1] * (period - 1) + series[i]) / period
     return result
+
 
 def _linear_slope(prices: np.ndarray) -> float:
     """Slope of linear regression over prices."""

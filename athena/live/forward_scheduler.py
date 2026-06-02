@@ -95,11 +95,71 @@ class ForwardScheduler:
             logger.info("Forward cycle took %.0f s. Sleeping %.0f s.", elapsed, sleep_for)
             self._stop_event.wait(sleep_for)
 
+    def _check_drift(self, summary: dict, row) -> bool:
+        """Compare forward PnL vs backtest baseline; demote if severe.
+
+        Severe = forward PnL < 50 % of backtest total_return, or
+                 backtest positive but forward < –10 %.
+        """
+        from athena.common.models import StrategyStatus
+        import json
+        backtest_return = float(getattr(row, "total_return", 0.0) or 0.0)
+        forward_pnl = summary.get("total_pnl", 0.0)
+        drift_ratio = forward_pnl / max(abs(backtest_return), 0.001)
+        is_severe = (
+            (backtest_return > 0 and drift_ratio < 0.5)
+            or (backtest_return > 0 and forward_pnl < -0.10)
+        )
+        if is_severe:
+            logger.error(
+                "SEVERE DRIFT for %s: backtest=%.4f forward=%.4f ratio=%.2f — demoting",
+                row.id, backtest_return, forward_pnl, drift_ratio,
+            )
+            row.status = StrategyStatus.RETIRED.value
+            meta = row.metadata_json or {}
+            if isinstance(meta, str):
+                try:
+                    meta = json.loads(meta)
+                except Exception:
+                    meta = {}
+            meta["drift_demotion"] = {
+                "forward_pnl": forward_pnl,
+                "backtest_return": backtest_return,
+                "ratio": drift_ratio,
+                "demoted_at": datetime.now(timezone.utc).isoformat(),
+            }
+            row.metadata_json = meta
+            TelemetryCollector().set_kill_switch(True)
+        return is_severe
+
+    def _mini_ga_restart(self, template, old_dna: dict) -> None:
+        """Spawn a lightweight re-evolution around the fallen champion."""
+        import threading
+        def _run():
+            try:
+                from athena.core.engine import AthenaEngine
+                from athena.common.models import GenerationConfig, StrategyTemplate
+                from athena.generator.dna import DNAEncoder
+                cfg = GenerationConfig(population_size=8, generations=2, mutation_rate=0.25)
+                engine = AthenaEngine(cfg)
+                # evolve returns records sorted by score descending
+                records = engine.evolve(StrategyTemplate(template), run_gates=True)
+                if records and records[0].score.verdict == "promote":
+                    logger.info("Mini-GA restart produced new champion %s (score=%.3f)",
+                                records[0].id, records[0].score.raw_score)
+                else:
+                    logger.warning("Mini-GA restart did not produce a promotable strategy")
+            except Exception as exc:
+                logger.error("Mini-GA restart failed: %s", exc)
+        threading.Thread(target=_run, daemon=True).start()
+
     def run_cycle(self) -> List[ForwardRunSummary]:
-        """Run one forward cycle: find PROMOTED strategies and dry-run each."""
+        """Run one forward cycle: find PROMOTED strategies and dry-run each.
+        If severe drift is detected, demote strategy and trigger mini-GA restart."""
         self.last_cycle_at = datetime.now(timezone.utc)
         self.total_cycles += 1
 
+        import json
         session = get_session()
         promoted = (
             session.query(StrategyModel)
@@ -115,7 +175,7 @@ class ForwardScheduler:
             try:
                 _, summary = run_forward(
                     sid,
-                    pairs=None,  # default BTC/USDT:USDT
+                    pairs=None,
                     timeframe="1h",
                     dry_run=True,
                 )
@@ -127,7 +187,7 @@ class ForwardScheduler:
                     total_closed=summary["total_closed"],
                     total_pnl=summary["total_pnl"],
                     killed=summary["killed"],
-                    started_at=time.time(),  # approximate; actual start/end inside run_forward
+                    started_at=time.time(),
                     finished_at=time.time(),
                 )
                 results.append(record)
@@ -140,9 +200,18 @@ class ForwardScheduler:
                     TelemetryCollector().record_kill_switch()
                     logger.error(
                         "KILL-SWITCH triggered during forward run: strategy=%s pnl=%.4f",
-                        sid,
-                        record.total_pnl,
+                        sid, record.total_pnl,
                     )
+
+                # ── drift check ──
+                session = get_session()
+                # refresh row from current session in case it was modified by another cycle
+                row = session.query(StrategyModel).filter_by(id=sid).first()
+                severe = self._check_drift(summary, row)
+                if severe:
+                    self._mini_ga_restart(row.template, row.dna)
+                session.commit()
+                session.close()
             except Exception as exc:
                 logger.error("ForwardScheduler: run failed for %s: %s", sid, exc)
 

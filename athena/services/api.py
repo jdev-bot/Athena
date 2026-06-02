@@ -744,6 +744,33 @@ async def list_signals(
     ]
 
 
+# ── forward-test PnL time-series ─────────────────────────
+class PnLPoint(BaseModel):
+    timestamp: str
+    pnl_pct: float
+    cumulative_pnl: float
+
+@app.get("/forward/pnl")
+async def forward_pnl(strategy_id: str, symbol: Optional[str] = None):
+    """Return cumulative PnL time-series for a strategy's forward-test signals."""
+    session = get_session()
+    q = session.query(Signal).filter(Signal.strategy_id == strategy_id)
+    if symbol:
+        q = q.filter(Signal.symbol == symbol)
+    rows = q.order_by(Signal.created_at.asc()).all()
+
+    cumulative = 0.0
+    points: List[PnLPoint] = []
+    for r in rows:
+        pnl = r.pnl_pct or 0.0
+        cumulative += pnl
+        ts = r.created_at.isoformat() if r.created_at else ""
+        points.append(PnLPoint(timestamp=ts, pnl_pct=pnl, cumulative_pnl=round(cumulative, 6)))
+
+    return points
+
+
+
 # ── telemetry ──────────────────────────────────────────────────────
 @app.get("/metrics")
 async def metrics():

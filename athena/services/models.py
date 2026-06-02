@@ -110,6 +110,7 @@ class Signal(Base):
     entry_price = Column(Float, nullable=False)
     exit_price = Column(Float, nullable=True)
     timestamp = Column(DateTime, default=_utcnow)
+    created_at = Column(DateTime, default=_utcnow)   # alias for API convenience
     exit_time = Column(DateTime, nullable=True)
     pnl_pct = Column(Float, default=0.0)
     pnl_abs = Column(Float, default=0.0)

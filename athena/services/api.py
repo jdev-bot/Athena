@@ -624,6 +624,99 @@ async def live_status(session_id: str):
 
 
 # ── telemetry ──────────────────────────────────────────────────────
+from athena.services.forward_runner import ForwardRunner, run_forward
+
+
+class ForwardRunRequest(BaseModel):
+    strategy_id: str
+    pairs: Optional[List[str]] = None
+    timeframe: str = "1h"
+
+
+class ForwardRunResponse(BaseModel):
+    strategy_id: str
+    bars: int
+    total_signals: int
+    open_positions: int
+    total_closed: int
+    total_pnl: float
+    killed: bool
+
+
+@app.post("/forward/run", response_model=ForwardRunResponse)
+async def forward_run(req: ForwardRunRequest):
+    """Run dry-run forward test for a stored strategy."""
+    try:
+        record, summary = run_forward(
+            req.strategy_id,
+            pairs=req.pairs,
+            timeframe=req.timeframe,
+            dry_run=True,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    return ForwardRunResponse(
+        strategy_id=req.strategy_id,
+        bars=summary["bars"],
+        total_signals=summary["total_signals"],
+        open_positions=summary["open_positions"],
+        total_closed=summary["total_closed"],
+        total_pnl=summary["total_pnl"],
+        killed=summary["killed"],
+    )
+
+
+# ── signals ─────────────────────────────────────────────────────────
+from athena.services.models import Signal  # noqa: E402
+
+
+class SignalListResponse(BaseModel):
+    id: str
+    strategy_id: str
+    symbol: str
+    direction: str
+    confidence: float
+    entry_price: float
+    exit_price: Optional[float]
+    pnl_pct: Optional[float]
+    status: str
+    created_at: str
+
+
+@app.get("/signals")
+async def list_signals(
+    strategy_id: Optional[str] = None,
+    symbol: Optional[str] = None,
+    status: Optional[str] = None,
+    limit: int = 50,
+):
+    session = get_session()
+    q = session.query(Signal)
+    if strategy_id:
+        q = q.filter(Signal.strategy_id == strategy_id)
+    if symbol:
+        q = q.filter(Signal.symbol == symbol)
+    if status:
+        q = q.filter(Signal.status == status)
+    rows = q.order_by(Signal.created_at.desc()).limit(limit).all()
+    return [
+        {
+            "id": r.id,
+            "strategy_id": r.strategy_id,
+            "symbol": r.symbol,
+            "direction": r.direction,
+            "confidence": r.confidence,
+            "entry_price": r.entry_price,
+            "exit_price": r.exit_price,
+            "pnl_pct": r.pnl_pct,
+            "status": r.status,
+            "created_at": r.created_at.isoformat(),
+        }
+        for r in rows
+    ]
+
+
+# ── telemetry ──────────────────────────────────────────────────────
 @app.get("/metrics")
 async def metrics():
     return Response(content=generate_metrics(), media_type=metrics_content_type())

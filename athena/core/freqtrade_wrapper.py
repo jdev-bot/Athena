@@ -13,6 +13,15 @@ logger = logging.getLogger(__name__)
 import pandas as pd
 import numpy as np
 
+# Suppress known noisy Freqtrade internal warnings about unawaited coroutines
+# during exchange initialization teardown.
+import warnings
+warnings.filterwarnings(
+    "ignore",
+    message=r"coroutine 'Exchange\._api_reload_markets' was never awaited",
+    category=RuntimeWarning,
+)
+
 from freqtrade.resolvers import StrategyResolver
 from freqtrade.optimize.backtesting import Backtesting
 from freqtrade.resolvers import ExchangeResolver
@@ -187,17 +196,23 @@ class FreqtradeWrapper:
             cfg["runmode"] = RunMode.BACKTEST
             cfg["dry_run"] = True
 
-            # Load exchange
+            # Load exchange + run backtest inside isolated scope to suppress
+            # Freqtrade internal async coroutine warnings during gc.
+            def _run_bt(cfg):
+                import warnings
+                with warnings.catch_warnings():
+                    warnings.simplefilter("ignore", RuntimeWarning)
+                    exchange_instance = ExchangeResolver.load_exchange(
+                        cfg, load_leverage_tiers=True
+                    )
+                    bt = Backtesting(cfg, exchange=exchange_instance)
+                    bt.start()
+                    return bt.results
+
             import warnings
             with warnings.catch_warnings():
                 warnings.simplefilter("ignore", RuntimeWarning)
-                exchange_instance = ExchangeResolver.load_exchange(cfg, load_leverage_tiers=True)
-                # Backtest
-                bt = Backtesting(cfg, exchange=exchange_instance)
-                bt.start()
-
-            # Extract metrics from bt.results
-            results = bt.results
+                results = _run_bt(cfg)
             if not results or "strategy" not in results:
                 return self._empty_metrics()
 

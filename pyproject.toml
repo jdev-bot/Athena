@@ -32,3 +32,6 @@ dev = [
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 markers = ["slow: marks tests as slow (deselect with '-m \"not slow\"')", "timeout: marks tests with a custom timeout threshold"]
+filterwarnings = [
+    "ignore:coroutine 'Exchange._api_reload_markets' was never awaited:RuntimeWarning",
+]

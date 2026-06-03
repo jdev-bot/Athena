@@ -1,87 +1,134 @@
 # Athena Project Context
 
 ## Overview
-ML-powered strategy generator for crypto trading via the **Freqtrade** framework (unified backtesting + live execution).
+ML-powered autonomous strategy generator and execution engine for crypto futures trading via **Freqtrade**.
 
 ## Stack
-- **Backend:** Python 3.12, FastAPI, SQLAlchemy + PostgreSQL
+- **Backend:** Python 3.12, FastAPI, SQLAlchemy + PostgreSQL/SQLite
 - **Genetic Engine:** Custom GA with DNA encoding
 - **Backtesting:** Freqtrade framework with real market data via ccxt
+- **Live Execution:** Freqtrade bot subprocess in paper mode
 - **Live Feed:** ccxt Pro WebSocket streaming (Binance)
-- **Tests:** pytest with 22 E2E tests (all passing)
+- **Tests:** pytest, 272 tests across 22 files (all passing)
 - **Repo:** https://github.com/jdev-bot/Athena
 
 ## Git
 - **Remote:** https://github.com/jdev-bot/Athena.git
 - **Branch:** main
-- **Latest commit:** 43c13d6 (Jesse → Freqtrade migration, 22/22 tests)
+- **Latest commit:** b6c301d (comprehensive dashboard test suite)
 
-## Phase 1 Complete ✅
+## Phase Status
+
+### Phase 1 ✅ — Generator + Backtest
 - Strategy DNA generator + GA engine
-- FastAPI service with 7 endpoints
-- ~~Jesse `research.backtest()` integration~~ → replaced with **Freqtrade `Backtesting` API**
-- Real market data via ccxt / Binance OHLCV
-- 22 E2E tests covering API, DNA, GA, scorer, orchestrator, wrapper, live runner
+- FastAPI service with 30+ endpoints
+- Freqtrade `Backtesting` API with real market data
+- 22 E2E tests covering API, DNA, GA, scorer, engine, wrapper
 
-## Phase 2 Complete ✅
-- **LiveFeed** — async ccxt Pro WebSocket streaming real 1m BTC/USDT candles
-- **LiveRunner** — forward-test evaluator (signal-only, no trade execution)
-- **FastAPI live endpoints** — `POST /live/start`, `POST /live/stop`, `GET /live/status`
-- **Kill-switch** — max drawdown (15%) + daily loss limit (10%) circuit breakers
-- **`live_sessions`** DB table with runtime stats (equity, positions, trades, signals)
+### Phase 2 ✅ — LiveFeed + Forward-test
+- `LiveFeed` — async ccxt Pro WebSocket streaming 1m candles
+- `ForwardRunner` — dry-run evaluator (signal-only, no real orders)
+- Kill-switch circuit breakers (max_drawdown 15%, daily_loss_limit 10%)
+- `live_sessions` DB table with runtime stats
+- Forward-test scheduler with drift detection
 
-## Phase 3 — Freqtrade Live Execution (planned)
-- Deploy freqtrade in dry-run (paper) mode with generated strategies
-- `/live/start` launches freqtrade bot process; `/live/stop` terminates
-- Single strategy format: same `.py` file runs in backtest, paper, and live
-- Proxy freqtrade status via its REST API server
+### Phase 3 ✅ — Freqtrade Live Execution
+- `BotManager` spawns `freqtrade trade` subprocess in paper mode
+- `Deployer` writes strategy + config into Freqtrade `user_data` directory
+- `LiveRunner` public API wrapping BotManager
+- `/live/start`, `/live/stop`, `/live/status` endpoints
+- Kill-switch monitor polls Freqtrade API every 30s
+- Graceful SIGTERM shutdown + deploy dir cleanup
 
-## Available Endpoints (10 total)
+### Phase 4 🔲 — Production Hardening
+- Docker containerization
+- Alembic database migrations
+- API authentication / rate limiting
+- systemd service files
+- Structured logging + log rotation
+
+### Phase 5 🔲 — Multi-Exchange
+- Config templates for Bybit, OKX, Kraken
+- Exchange-specific fee structures + leverage limits
+- Per-exchange data downloaders
+
+### Phase 6 🔲 — Real-time Dashboard
+- WebSocket push from live sessions
+- Live PnL chart updates
+- Signal stream visualization
+
+## Endpoints (30+)
+
 | Method | Path | Description |
 |---|---|---|
+| GET | `/` | Dashboard HTML |
 | GET | `/health` | Service status |
-| POST | `/strategies/generate` | Generate strategies by DNA |
-| GET | `/strategies` | List/filter strategies |
-| GET | `/strategies/{id}` | Strategy detail |
-| POST | `/backtests/run` | Run freqtrade backtest on real data |
-| GET | `/backtests` | Completed backtest list |
-| GET | `/stats` | Aggregate counts |
-| POST | `/live/start` | Start forward-test session |
-| POST | `/live/stop` | Stop session |
-| GET | `/live/status` | Session stats + signals |
+| POST | `/strategies/generate` | Generate strategies |
+| GET | `/strategies` | List/filter |
+| GET | `/strategies/{id}` | Detail |
+| POST | `/evolve` | GA evolution |
+| POST | `/backtests/run` | Backtest |
+| GET | `/backtests` | Results list |
+| GET | `/stats` | Aggregates |
+| POST | `/promote` | Run gates |
+| POST | `/deploy` | Export `.py` |
+| POST | `/hyperopt` | Parameter tuning |
+| POST | `/live/start` | Start bot |
+| POST | `/live/stop` | Stop bot |
+| GET | `/live/status` | Session stats |
+| POST | `/forward/run` | Dry-run test |
+| GET | `/forward/pnl` | PnL series |
+| GET/POST | `/forward/scheduler/*` | Scheduler control |
+| GET/POST | `/portfolio/*` | Portfolio ops |
+| GET/POST | `/drift/*` | Drift monitoring |
+| POST/GET | `/dna/*` | DNA versioning |
+| GET | `/metrics` | Prometheus metrics |
 
 ## Architecture
+
 ```
-┌────────────────────────────────────────────────────────────────────┐
-│                         FastAPI / Uvicorn                          │
-│    /strategies    /backtests    /stats    /live/start|stop|status  │
-└──────────────┬─────────────────────┬──────────────┬────────────────┘
-               │                     │              │
-        ┌──────▼──────┐      ┌─────▼──────┐  ┌──▼──────────┐
-        │  Generator  │      │  Backtest  │  │  LiveRunner │
-        │  DNA / GA   │      │  Freqtrade │  │  Signal-only│
-        └─────────────┘      └─────┬──────┘  └──────┬──────┘
-                                   │                  │
-                          ┌────────▼─────────┐  ┌────▼──────┐
-                          │ MarketDataProvider│  │  LiveFeed │
-                          │  ccxt / Binance   │  │  WS 1m    │
-                          └───────────────────┘  └───────────┘
+FastAPI / Uvicorn
+├── /strategies    → Generator (DNA / GA)
+├── /backtests     → FreqtradeWrapper
+├── /live          → LiveRunner → BotManager → Freqtrade process
+├── /forward       → ForwardRunner + ForwardScheduler
+├── /portfolio     → PortfolioManager
+├── /drift         → FeedbackCollector + AdaptiveLoop
+├── /dna           → DNA versioning
+├── /scheduler     → AutonomousScheduler
+└── /metrics       → TelemetryCollector
 ```
 
 ## Key Files
+
 | File | Purpose |
 |---|---|
-| `athena/services/api.py` | FastAPI app (10 endpoints) |
-| `athena/core/freqtrade_wrapper.py` | `FreqtradeWrapper` — temp-project backtest runner |
-| `athena/market/provider.py` | `MarketDataProvider` — ccxt OHLCV fetcher |
-| `athena/live/feed.py` | `LiveFeed` — ccxt Pro WebSocket streamer |
-| `athena/live/runner.py` | `ForwardRunner` + `LiveRunner` — forward-test |
-| `athena/orchestrator.py` | `AthenaOrchestrator` — GA generation loop |
-| `tests/test_e2e.py` | 22 end-to-end tests |
-| `pyproject.toml` | Dependencies (freqtrade, ccxt, pandas-ta) + pytest config |
+| `athena/services/api.py` | FastAPI app |
+| `athena/core/freqtrade_wrapper.py` | Programmatic backtesting |
+| `athena/core/engine.py` | `AthenaEngine` |
+| `athena/live/bot_manager.py` | Bot process lifecycle |
+| `athena/live/deployer.py` | Deploy directory builder |
+| `athena/live/freqtrade_config.py` | Freqtrade `config.json` generator |
+| `athena/live/runner.py` | `LiveRunner` |
+| `athena/live/scheduler.py` | Autonomous evolution |
+| `athena/live/forward_scheduler.py` | Forward-test + drift |
+| `athena/live/feed.py` | WebSocket candle stream |
+| `athena/portfolio/manager.py` | Capital allocation |
+| `athena/generator/dna.py` | DNA encoder |
+| `athena/generator/ga_engine.py` | GA engine |
+| `athena/generator/templates.py` | Strategy templates |
+| `athena/evaluator/scorer.py` | Scoring + gates |
+| `athena/market/provider.py` | ccxt data |
+| `athena/services/ui/index.html` | Dashboard |
+| `tests/` | 22 test files, 272 tests |
 
 ## Environment
 - Python venv at `.venv/`
-- Freqtrade installed in venv with editable or standard install
-- ccxt 4.x installed in venv
-- PostgreSQL running on `localhost:5435` with `athena_db`
+- Freqtrade installed in venv
+- ccxt 4.x installed
+- PostgreSQL on `localhost:5435` with `athena_db` (SQLite default for dev)
+
+## Testing
+```bash
+pytest tests/ -q
+```

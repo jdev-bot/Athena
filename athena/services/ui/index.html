@@ -1,0 +1,481 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Athena Dashboard</title>
+<style>
+  :root {
+    --bg: #0d1117;
+    --panel: #161b22;
+    --border: #30363d;
+    --text: #c9d1d9;
+    --muted: #8b949e;
+    --accent: #58a6ff;
+    --success: #3fb950;
+    --warn: #d29922;
+    --danger: #f85149;
+    --radius: 8px;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, monospace;
+    background: var(--bg);
+    color: var(--text);
+    line-height: 1.5;
+  }
+  header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 12px 20px;
+    border-bottom: 1px solid var(--border);
+    position: sticky;
+    top: 0;
+    background: var(--bg);
+    z-index: 10;
+  }
+  header h1 {
+    margin: 0;
+    font-size: 1.3rem;
+    letter-spacing: 0.02em;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+  .dot {
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    display: inline-block;
+  }
+  .dot.ok { background: var(--success); }
+  .dot.down { background: var(--danger); }
+  .badge {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 12px;
+    font-size: 0.75rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    border: 1px solid var(--border);
+  }
+  .badge.promoted { color: var(--success); border-color: var(--success); }
+  .badge.generated { color: var(--accent); border-color: var(--accent); }
+  .badge.retired { color: var(--danger); border-color: var(--danger); }
+  .badge.backtest_running { color: var(--warn); border-color: var(--warn); }
+  .badge.backtest_done { color: var(--success); border-color: var(--success); }
+  .badge.draft { color: var(--muted); border-color: var(--muted); }
+  .badge.drift { color: var(--danger); border-color: var(--danger); background: rgba(248,81,73,0.1); }
+
+  main {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(340px, 1fr));
+    gap: 16px;
+    padding: 16px;
+  }
+  .panel {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 14px 16px;
+  }
+  .panel h2 {
+    margin: 0 0 10px;
+    font-size: 0.95rem;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--muted);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+  .panel h2 .refresh {
+    cursor: pointer;
+    font-size: 1rem;
+    opacity: 0.6;
+    transition: opacity .2s;
+  }
+  .panel h2 .refresh:hover { opacity: 1; }
+  .kpi-row {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(100px, 1fr));
+    gap: 10px;
+  }
+  .kpi {
+    text-align: center;
+    padding: 8px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+  }
+  .kpi .val {
+    font-size: 1.4rem;
+    font-weight: 700;
+    color: var(--accent);
+    display: block;
+  }
+  .kpi .lbl {
+    font-size: 0.75rem;
+    color: var(--muted);
+    margin-top: 2px;
+  }
+
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.82rem;
+  }
+  th, td {
+    padding: 6px 8px;
+    text-align: left;
+    border-bottom: 1px solid var(--border);
+  }
+  th {
+    color: var(--muted);
+    font-weight: 600;
+    font-size: 0.75rem;
+    text-transform: uppercase;
+    letter-spacing: 0.02em;
+    position: sticky;
+    top: 0;
+    background: var(--panel);
+  }
+  tr:hover td { background: rgba(88,166,255,0.04); }
+  td { vertical-align: middle; }
+
+  .empty-state {
+    text-align: center;
+    color: var(--muted);
+    padding: 20px;
+    font-style: italic;
+  }
+  .chart-wrap { position: relative; height: 160px; }
+  canvas { width: 100%; height: 100%; }
+
+  .alert-row {
+    display: flex;
+    gap: 10px;
+    align-items: center;
+    padding: 8px 0;
+    border-bottom: 1px solid var(--border);
+  }
+  .alert-row:last-child { border: none; }
+  .alert-row .msg { flex: 1; }
+  .alert-row .ts { font-size: 0.75rem; color: var(--muted); }
+  .footer {
+    display: flex;
+    gap: 12px;
+    padding: 10px 20px;
+    font-size: 0.75rem;
+    color: var(--muted);
+    border-top: 1px solid var(--border);
+    flex-wrap: wrap;
+  }
+  .footer a { color: var(--accent); text-decoration: none; }
+  .footer a:hover { text-decoration: underline; }
+  .loading::after { content: " …"; animation: dots 1s steps(3) infinite; }
+  @keyframes dots { 0%{content:" .";} 33%{content:" ..";} 66%{content:" ...";} }
+</style>
+</head>
+<body>
+<header>
+  <h1>
+    <span class="dot ok" id="health-dot"></span>
+    Athena Dashboard
+  </h1>
+  <span style="font-size:0.8rem;color:var(--muted)">v0.3.0</span>
+</header>
+
+<main>
+  <!-- Pipeline Overview -->
+  <div class="panel" style="grid-column: 1 / -1;">
+    <h2>
+      Pipeline
+      <span class="refresh" onclick="loadAll()" title="Refresh">↻</span>
+    </h2>
+    <div class="kpi-row" id="pipeline-kpis">
+      <div class="kpi"><span class="val loading" id="kpi-gens">—</span><span class="lbl">Generations</span></div>
+      <div class="kpi"><span class="val loading" id="kpi-promoted">—</span><span class="lbl">Promoted</span></div>
+      <div class="kpi"><span class="val loading" id="kpi-retired">—</span><span class="lbl">Retired</span></div>
+      <div class="kpi"><span class="val loading" id="kpi-last-cycle">—</span><span class="lbl">Last Cycle</span></div>
+      <div class="kpi"><span class="val loading" id="kpi-signals">—</span><span class="lbl">Signals (24h)</span></div>
+      <div class="kpi"><span class="val loading" id="kpi-kill">—</span><span class="lbl">Kill Switch</span></div>
+    </div>
+  </div>
+
+  <!-- Strategies -->
+  <div class="panel" style="grid-column: 1 / -1;">
+    <h2>Strategies <span class="refresh" onclick="loadStrategies()">↻</span></h2>
+    <div style="overflow-x:auto;max-height:280px;overflow-y:auto;">
+      <table id="strategies-table">
+        <thead>
+          <tr><th>Name</th><th>Status</th><th>Template</th><th>Score</th><th>Gen</th><th>Return</th><th>Sharpe</th><th>DNA v</th><th>Updated</th></tr>
+        </thead>
+        <tbody></tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- Forward PnL Chart -->
+  <div class="panel">
+    <h2>Forward PnL <span class="refresh" onclick="loadPnLChart()">↻</span></h2>
+    <div class="chart-wrap">
+      <canvas id="pnl-canvas"></canvas>
+    </div>
+    <div id="pnl-info" class="empty-state">Select a promoted strategy to view</div>
+  </div>
+
+  <!-- Live Signals -->
+  <div class="panel">
+    <h2>Latest Signals <span class="refresh" onclick="loadSignals()">↻</span></h2>
+    <div style="max-height:260px;overflow-y:auto;">
+      <table id="signals-table">
+        <thead>
+          <tr><th>Pair</th><th>Dir</th><th>PnL%</th><th>Status</th><th>Time</th></tr>
+        </thead>
+        <tbody></tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- Drift Alerts -->
+  <div class="panel">
+    <h2>Drift Alerts <span class="refresh" onclick="loadDrift()">↻</span></h2>
+    <div id="drift-list"></div>
+  </div>
+
+  <!-- DNA Timeline -->
+  <div class="panel">
+    <h2>DNA Versions <span class="refresh" onclick="loadDnaVersions()">↻</span></h2>
+    <div style="max-height:260px;overflow-y:auto;">
+      <table id="dna-table">
+        <thead>
+          <tr><th>Strategy</th><th>v</th><th>Source</th><th>Preview</th><th>When</th></tr>
+        </thead>
+        <tbody></tbody>
+      </table>
+    </div>
+  </div>
+</main>
+
+<footer class="footer">
+  <span id="health-text">Checking…</span>
+  <span style="margin-left:auto">
+    <a href="/docs">API Docs</a> ·
+    <a href="/metrics">Prometheus</a> ·
+    <a href="/health">Health</a> ·
+    <a href="/strategies">Strategies JSON</a> ·
+    <a href="/signals">Signals JSON</a>
+  </span>
+</footer>
+
+<script>
+const API = '';
+
+function fmtTime(iso) {
+  if (!iso) return '—';
+  const d = new Date(iso);
+  return d.toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'}) + ' ' + d.toLocaleDateString([], {month:'short', day:'numeric'});
+}
+function badge(status) {
+  return `<span class="badge ${status.toLowerCase().replace(/ /g,'_')}">${status}</span>`;
+}
+
+async function fetchJSON(path) {
+  const r = await fetch(API + path);
+  if (!r.ok) throw new Error(r.status + ' ' + r.statusText);
+  return r.json();
+}
+
+// ── Pipeline KPIs ──
+async function loadPipeline() {
+  try {
+    const stats = await fetchJSON('/stats');
+    const h = await fetchJSON('/health');
+    const sched = await fetchJSON('/scheduler/status');
+    document.getElementById('kpi-gens').textContent = stats.generations ?? 0;
+    document.getElementById('kpi-promoted').textContent = stats.promoted ?? 0;
+    document.getElementById('kpi-retired').textContent = stats.retired ?? 0;
+    document.getElementById('kpi-last-cycle').textContent = fmtTime(sched.last_cycle_at);
+    document.getElementById('kpi-signals').textContent = stats.signals_24h ?? 0;
+    const dot = document.getElementById('health-dot');
+    const ks = stats.kill_switch_active;
+    dot.className = 'dot ' + (ks ? 'down' : 'ok');
+    document.getElementById('kpi-kill').textContent = ks ? 'ACTIVE' : 'OK';
+    document.getElementById('health-text').textContent = `${h.status} | ${h.service} ${h.version}`;
+  } catch(e) {
+    document.getElementById('health-dot').className = 'dot down';
+    document.getElementById('health-text').textContent = 'Error: ' + e.message;
+  }
+}
+
+// ── Strategies Table ──
+let strategiesData = [];
+async function loadStrategies() {
+  try {
+    strategiesData = await fetchJSON('/strategies?status=all');
+    const tbody = document.querySelector('#strategies-table tbody');
+    if (!strategiesData.length) { tbody.innerHTML = '<tr><td colspan="9" class="empty-state">No strategies yet</td></tr>'; return; }
+    tbody.innerHTML = strategiesData.map(s => {
+      const dnaVer = (s.dna_versions && s.dna_versions.length) ? s.dna_versions[s.dna_versions.length-1].version : '—';
+      return `<tr>
+        <td><strong>${s.name}</strong><br><span style="font-size:0.7rem;color:var(--muted)">${s.id.slice(0,8)}</span></td>
+        <td>${badge(s.status)}</td>
+        <td>${s.template}</td>
+        <td>${s.score?.raw_score?.toFixed(3) ?? '—'}</td>
+        <td>${s.generation ?? '—'}</td>
+        <td>${(s.total_return * 100).toFixed(2)}%</td>
+        <td>${s.sharpe?.toFixed(2) ?? '—'}</td>
+        <td>${dnaVer}</td>
+        <td>${fmtTime(s.updated_at)}</td>
+      </tr>`;
+    }).join('');
+  } catch(e) {
+    document.querySelector('#strategies-table tbody').innerHTML = `<tr><td colspan="9" class="empty-state">Error: ${e.message}</td></tr>`;
+  }
+}
+
+// ── Forward PnL Chart (Canvas) ──
+async function loadPnLChart() {
+  const sid = strategiesData.find(s => s.status === 'promoted')?.id;
+  if (!sid) {
+    document.getElementById('pnl-info').textContent = 'No promoted strategy available for PnL chart.';
+    return;
+  }
+  document.getElementById('pnl-info').textContent = 'Loading…';
+  try {
+    const points = await fetchJSON(`/forward/pnl?strategy_id=${sid}`);
+    if (!points.length) { document.getElementById('pnl-info').textContent = 'No forward data for ' + sid; return; }
+    document.getElementById('pnl-info').textContent = `${points.length} points | ${sid.slice(0,8)}`;
+    drawChart(points, 'pnl-canvas');
+  } catch(e) {
+    document.getElementById('pnl-info').textContent = 'Error: ' + e.message;
+  }
+}
+
+function drawChart(points, canvasId) {
+  const c = document.getElementById(canvasId);
+  const ctx = c.getContext('2d');
+  const dpr = window.devicePixelRatio || 1;
+  const rect = c.getBoundingClientRect();
+  c.width = rect.width * dpr;
+  c.height = rect.height * dpr;
+  ctx.scale(dpr, dpr);
+  const W = rect.width, H = rect.height;
+  const pad = {t:10,r:10,b:24,l:36};
+  const data = points.map(p => p.cumulative_pnl);
+  const min = Math.min(0, ...data);
+  const max = Math.max(0, ...data);
+  const range = max - min || 1;
+  const x = i => pad.l + (i / (data.length - 1)) * (W - pad.l - pad.r);
+  const y = v => pad.t + (1 - (v - min) / range) * (H - pad.t - pad.b);
+
+  ctx.clearRect(0, 0, W, H);
+  // grid
+  ctx.strokeStyle = '#30363d';
+  ctx.lineWidth = 1;
+  for (let i = 0; i <= 4; i++) {
+    const yy = pad.t + (i/4) * (H - pad.t - pad.b);
+    ctx.beginPath(); ctx.moveTo(pad.l, yy); ctx.lineTo(W-pad.r, yy); ctx.stroke();
+  }
+  // zero line
+  const y0 = y(0);
+  ctx.strokeStyle = '#8b949e';
+  ctx.setLineDash([4,4]);
+  ctx.beginPath(); ctx.moveTo(pad.l, y0); ctx.lineTo(W-pad.r, y0); ctx.stroke();
+  ctx.setLineDash([]);
+  // line
+  ctx.strokeStyle = data[data.length-1] >= 0 ? '#3fb950' : '#f85149';
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  data.forEach((v, i) => { if (i===0) ctx.moveTo(x(i), y(v)); else ctx.lineTo(x(i), y(v)); });
+  ctx.stroke();
+  // labels
+  ctx.fillStyle = '#8b949e';
+  ctx.font = '10px monospace';
+  ctx.textAlign = 'right';
+  ctx.fillText(min.toFixed(2), pad.l-4, H-pad.b);
+  ctx.fillText(max.toFixed(2), pad.l-4, pad.t+10);
+  ctx.textAlign = 'center';
+  ctx.fillText(fmtTime(points[0].timestamp), pad.l+20, H-4);
+  ctx.fillText(fmtTime(points[points.length-1].timestamp), W-pad.r-20, H-4);
+}
+
+// ── Signals ──
+async function loadSignals() {
+  try {
+    const rows = await fetchJSON('/signals?limit=20');
+    const tbody = document.querySelector('#signals-table tbody');
+    if (!rows.length) { tbody.innerHTML = '<tr><td colspan="5" class="empty-state">No signals</td></tr>'; return; }
+    tbody.innerHTML = rows.map(r => `<tr>
+      <td>${r.symbol}</td>
+      <td>${r.direction}</td>
+      <td style="color:${(r.pnl_pct||0)>=0?'var(--success)':'var(--danger)'}">${r.pnl_pct?.toFixed(3) ?? '—'}</td>
+      <td>${r.status}</td>
+      <td>${fmtTime(r.created_at)}</td>
+    </tr>`).join('');
+  } catch(e) {
+    document.querySelector('#signals-table tbody').innerHTML = `<tr><td colspan="5" class="empty-state">Error: ${e.message}</td></tr>`;
+  }
+}
+
+// ── Drift Alerts ──
+async function loadDrift() {
+  try {
+    const rows = await fetchJSON('/strategies?status=retired');
+    const container = document.getElementById('drift-list');
+    const driftRows = rows.filter(r => r.metadata?.drift_demotion || r.metadata?.demotion);
+    if (!driftRows.length) { container.innerHTML = '<div class="empty-state">No drift alerts</div>'; return; }
+    container.innerHTML = driftRows.map(r => {
+      const d = r.metadata?.drift_demotion || r.metadata?.demotion || {};
+      return `<div class="alert-row">
+        <span class="badge drift">DRIFT</span>
+        <span class="msg"><strong>${r.name}</strong> — ${d.reason || 'demoted'}</span>
+        <span class="ts">${fmtTime(d.demoted_at || r.updated_at)}</span>
+      </div>`;
+    }).join('');
+  } catch(e) {
+    document.getElementById('drift-list').innerHTML = '<div class="empty-state">Error: ' + e.message + '</div>';
+  }
+}
+
+// ── DNA Versions ──
+async function loadDnaVersions() {
+  const tbody = document.querySelector('#dna-table tbody');
+  tbody.innerHTML = '<tr><td colspan="5" class="empty-state">Loading…</td></tr>';
+  try {
+    // Gather DNA versions for each strategy
+    let html = '';
+    for (const s of strategiesData.slice(0, 5)) {
+      const versions = await fetchJSON(`/dna/versions?strategy_id=${s.id}`);
+      if (!versions.versions.length) continue;
+      html += versions.versions.slice(-3).map(v => `<tr>
+        <td>${s.name}</td>
+        <td>${v.version}</td>
+        <td>${v.source}</td>
+        <td>${JSON.stringify(v.dna_preview || {})}</td>
+        <td>${fmtTime(v.created_at)}</td>
+      </tr>`).join('');
+    }
+    tbody.innerHTML = html || '<tr><td colspan="5" class="empty-state">No DNA snapshots</td></tr>';
+  } catch(e) {
+    tbody.innerHTML = `<tr><td colspan="5" class="empty-state">Error: ${e.message}</td></tr>`;
+  }
+}
+
+async function loadAll() {
+  await loadPipeline();
+  await loadStrategies();
+  await loadSignals();
+  await loadDrift();
+  await loadPnLChart();
+  await loadDnaVersions();
+}
+
+// Auto-refresh every 60s
+setInterval(loadAll, 60000);
+loadAll();
+</script>
+</body>
+</html>

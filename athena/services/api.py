@@ -6,7 +6,8 @@ from datetime import datetime, timezone
 from typing import List, Optional
 from pathlib import Path
 
-from fastapi import FastAPI, HTTPException, BackgroundTasks, Response
+from fastapi import FastAPI, HTTPException, BackgroundTasks, Response, APIRouter
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from athena.common.models import StrategyTemplate, StrategyStatus
@@ -45,6 +46,18 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="Athena", version="0.3.0", lifespan=lifespan)
+
+# ── static dashboard ───────────────────────────────────────────────
+UI_DIR = Path(__file__).parent / "ui"
+
+@app.get("/")
+async def dashboard_index():
+    """Serve Athena dashboard HTML."""
+    index_file = UI_DIR / "index.html"
+    if index_file.is_file():
+        return Response(content=index_file.read_text(), media_type="text/html")
+    return {"status": "ok", "service": "athena", "version": "0.3.0", "dashboard": "not_installed"}
+
 
 
 # ── request / response schemas ────────────────────────────────────
@@ -116,6 +129,9 @@ class StrategyListItem(BaseModel):
     sharpe: float
     total_trades: int
     created_at: str
+    updated_at: Optional[str] = None
+    metadata: Optional[dict] = None
+    dna_versions: Optional[List[dict]] = None
 
 
 class BacktestListItem(BaseModel):
@@ -190,6 +206,9 @@ async def list_strategies(status: Optional[str] = None, limit: int = 50):
             total_return=r.total_return, sharpe=r.sharpe,
             total_trades=r.total_trades,
             created_at=r.created_at.isoformat(),
+            updated_at=r.updated_at.isoformat() if r.updated_at else None,
+            metadata=(r.metadata_json if isinstance(r.metadata_json, dict) else {}),
+            dna_versions=None,
         )
         for r in rows
     ]
@@ -321,6 +340,11 @@ async def get_stats():
             "score": best.raw_score if best else 0.0,
             "verdict": best.verdict if best else None,
         },
+        "generations": 0,
+        "promoted": by_status.get("promoted", 0),
+        "retired": by_status.get("retired", 0),
+        "signals_24h": 0,
+        "kill_switch_active": False,
     }
 
 
